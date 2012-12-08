@@ -206,9 +206,13 @@ static void *tcp_worker(void *arg)
 				r = select(s+1, NULL, &writefds, NULL, &tv);
 				if(r) {
 					bytessent = send(s,  &curelem->data[index], bytesleft, 0);
-					if (bytessent == SOCKET_ERROR || do_exit) {
+					if (bytessent == SOCKET_ERROR) {
 						printf("worker socket error\n");
 						sighandler(0);
+						dead[0]=1;
+						pthread_exit(NULL);
+					} else if (do_exit) {
+						printf("do_exit\n");
 						dead[0]=1;
 						pthread_exit(NULL);
 					} else {
@@ -260,9 +264,13 @@ static void *command_worker(void *arg)
 			r = select(s+1, &readfds, NULL, NULL, &tv);
 			if(r) {
 				received = recv(s, (char*)&cmd+(sizeof(cmd)-left), left, 0);
-				if(received == SOCKET_ERROR || do_exit){
+				if(received == SOCKET_ERROR){
 					printf("comm recv socket error\n");
 					sighandler(0);
+					dead[1]=1;
+					pthread_exit(NULL);
+				} else if(do_exit){
+					printf("do exit\n");
 					dead[1]=1;
 					pthread_exit(NULL);
 				} else {
