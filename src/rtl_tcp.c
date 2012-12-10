@@ -123,8 +123,10 @@ sighandler(int signum)
 static void sighandler(int signum)
 {
 	fprintf(stderr, "Signal caught, exiting!\n");
-	do_exit = 1;
-	rtlsdr_cancel_async(dev);
+	if (!do_exit) {
+      rtlsdr_cancel_async(dev);
+      do_exit = 1;
+    }
 }
 #endif
 
@@ -207,7 +209,7 @@ static void *tcp_worker(void *arg)
 				if(r) {
 					bytessent = send(s,  &curelem->data[index], bytesleft, 0);
 					if (bytessent == SOCKET_ERROR) {
-						printf("worker socket error\n");
+                        perror("worker socket error");
 						sighandler(0);
 						dead[0]=1;
 						pthread_exit(NULL);
@@ -265,7 +267,7 @@ static void *command_worker(void *arg)
 			if(r) {
 				received = recv(s, (char*)&cmd+(sizeof(cmd)-left), left, 0);
 				if(received == SOCKET_ERROR){
-					printf("comm recv socket error\n");
+                    perror("comm recv socket error");
 					sighandler(0);
 					dead[1]=1;
 					pthread_exit(NULL);
@@ -522,12 +524,14 @@ int main(int argc, char **argv)
 		r = rtlsdr_read_async(dev, rtlsdr_callback, (void *)0,
 				      buf_num, 0);
 
-		closesocket(s);
 		if(!dead[0])
 			pthread_join(tcp_worker_thread, &status);
+        dead[0]=0;
 
 		if(!dead[1])
 			pthread_join(command_thread, &status);
+        dead[1]=0;
+		closesocket(s);
 
 		printf("all threads dead..\n");
 		curelem = ll_buffers;
