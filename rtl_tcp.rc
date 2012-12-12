@@ -15,7 +15,7 @@ set -e
 
 DAEMON=/usr/local/bin/rtl_tcp
 NAME=rtl_tcp
-DAEMONUSER=root
+DAEMONUSER=nobody
 PIDFILE=/var/run/rtl_tcp.pid
 DESC="RTL-SDR remote server"
 
