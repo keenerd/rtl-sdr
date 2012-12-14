@@ -209,7 +209,7 @@ static void *tcp_worker(void *arg)
 				if(r) {
 					bytessent = send(s,  &curelem->data[index], bytesleft, 0);
 					if (bytessent == SOCKET_ERROR) {
-                        perror("worker socket error");
+						perror("worker socket error");
 						sighandler(0);
 						dead[0]=1;
 						pthread_exit(NULL);
@@ -267,7 +267,7 @@ static void *command_worker(void *arg)
 			if(r) {
 				received = recv(s, (char*)&cmd+(sizeof(cmd)-left), left, 0);
 				if(received == SOCKET_ERROR){
-                    perror("comm recv socket error");
+					perror("comm recv socket error");
 					sighandler(0);
 					dead[1]=1;
 					pthread_exit(NULL);
@@ -526,11 +526,11 @@ int main(int argc, char **argv)
 
 		if(!dead[0])
 			pthread_join(tcp_worker_thread, &status);
-        dead[0]=0;
+		dead[0]=0;
 
 		if(!dead[1])
 			pthread_join(command_thread, &status);
-        dead[1]=0;
+		dead[1]=0;
 		closesocket(s);
 
 		printf("all threads dead..\n");
