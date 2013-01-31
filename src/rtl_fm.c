@@ -578,7 +578,7 @@ void full_demod(struct fm_state *fm)
     int i, sr, freq_next, hop = 0;
     //    pthread_mutex_lock(&data_ready);
 
-    unsigned char tmpBuf[DEFAULT_BUF_LENGTH]; // so much stack space O.o
+    static unsigned char tmpBuf[DEFAULT_BUF_LENGTH];
     while(ringbuffer_is_empty((ringbuffer*)fm->buf))
     {
         usleep(100000);
@@ -960,6 +960,7 @@ int main(int argc, char **argv)
         fclose(fm.file);}
 
     rtlsdr_close(dev);
+    free(fm.buf);
     free (buffer);
     return r >= 0 ? r : -r;
 }
