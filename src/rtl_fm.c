@@ -58,17 +58,19 @@
 #include <libusb.h>
 
 #include "rtl-sdr.h"
+#include "ringbuffer.h"
 
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_ASYNC_BUF_NUMBER	32
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
 #define MAXIMUM_OVERSAMPLE		16
 #define MAXIMUM_BUF_LENGTH		(MAXIMUM_OVERSAMPLE * DEFAULT_BUF_LENGTH)
+#define RINGBUFFER_NUM_ELEMENTS 10
 #define AUTO_GAIN			-100
 
 static pthread_t demod_thread;
-static pthread_mutex_t data_ready;  /* locked when no fresh data available */
-static pthread_mutex_t data_write;  /* locked when r/w buffer */
+//static pthread_mutex_t data_ready;  /* locked when no fresh data available */
+//static pthread_mutex_t data_write;  /* locked when r/w buffer */
 static int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
 static int lcm_post[17] = {1,1,1,3,1,5,3,7,1,9,5,11,3,13,7,15,1};
@@ -87,8 +89,8 @@ struct fm_state
 	int      output_scale;
 	int      squelch_level, conseq_squelch, squelch_hits, terminate_on_squelch;
 	int      exit_flag;
-	uint8_t  buf[MAXIMUM_BUF_LENGTH];
-	uint32_t buf_len;
+	uint8_t  *buf;
+	//	uint32_t buf_len;
 	int      signal[MAXIMUM_BUF_LENGTH];  /* 16 bit signed i/q pairs */
 	int16_t  signal2[MAXIMUM_BUF_LENGTH]; /* signal has lowpass, signal2 has demod */
 	int      signal_len;
@@ -574,13 +576,23 @@ static void optimal_settings(struct fm_state *fm, int freq, int hopping)
 void full_demod(struct fm_state *fm)
 {
 	int i, sr, freq_next, hop = 0;
-	rotate_90(fm->buf, fm->buf_len);
-	if (fm->fir_enable) {
-		low_pass_fir(fm, fm->buf, fm->buf_len);
-	} else {
-		low_pass(fm, fm->buf, fm->buf_len);
+	//    pthread_mutex_lock(&data_ready);
+
+	static unsigned char tmpBuf[DEFAULT_BUF_LENGTH];
+	while(ringbuffer_is_empty((ringbuffer*)fm->buf))
+    	{
+        	usleep(100000);
 	}
-	pthread_mutex_unlock(&data_write);
+	ringbuffer_read((ringbuffer*)fm->buf, tmpBuf);
+	//fprintf(stderr, "data!\n");
+
+	rotate_90(tmpBuf, sizeof(tmpBuf));
+	if (fm->fir_enable) {
+        	low_pass_fir(fm, tmpBuf, sizeof(tmpBuf));
+	} else {
+        	low_pass(fm, tmpBuf, sizeof(tmpBuf));
+	}
+	//    pthread_mutex_unlock(&data_write);
 	fm->mode_demod(fm);
         if (fm->mode_demod == &raw_demod) {
 		fwrite(fm->signal2, 2, fm->signal2_len, fm->file);
@@ -625,10 +637,20 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 		return;}
 	if (!ctx) {
 		return;}
-	pthread_mutex_lock(&data_write);
-	memcpy(fm2->buf, buf, len);
-	fm2->buf_len = len;
-	pthread_mutex_unlock(&data_ready);
+
+
+	if(ringbuffer_is_full((ringbuffer*)fm2->buf))
+	{
+        	fprintf(stderr, "Dropping %u bytes of rtl_sdr input due to full buffer!\n", len);
+        	return;
+	}
+
+    ringbuffer_write((ringbuffer*)fm2->buf, buf);
+
+	//	pthread_mutex_lock(&data_write);
+	//	memcpy(fm2->buf, buf, len);
+	//	fm2->buf_len = len;
+	//	pthread_mutex_unlock(&data_ready);
 	/* single threaded uses 25% less CPU? */
 	/* full_demod(fm2); */
 }
@@ -637,7 +659,6 @@ static void *demod_thread_fn(void *arg)
 {
 	struct fm_state *fm2 = arg;
 	while (!do_exit) {
-		pthread_mutex_lock(&data_ready);
 		full_demod(fm2);
 		if (fm2->exit_flag) {
 			do_exit = 1;
@@ -708,6 +729,8 @@ void fm_init(struct fm_state *fm)
 	fm->now_lpr = 0;
 	fm->dc_block = 0;
 	fm->dc_avg = 0;
+	fm->buf = malloc(sizeof(ringbuffer) + MAXIMUM_BUF_LENGTH * RINGBUFFER_NUM_ELEMENTS);
+	ringbuffer_init((ringbuffer*)fm->buf, MAXIMUM_BUF_LENGTH * RINGBUFFER_NUM_ELEMENTS, DEFAULT_BUF_LENGTH);
 }
 
 int main(int argc, char **argv)
@@ -725,8 +748,8 @@ int main(int argc, char **argv)
 	int ppm_error = 0;
 	char vendor[256], product[256], serial[256];
 	fm_init(&fm);
-	pthread_mutex_init(&data_ready, NULL);
-	pthread_mutex_init(&data_write, NULL);
+	//    pthread_mutex_init(&data_ready, NULL);
+	//    pthread_mutex_init(&data_write, NULL);
 
 	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EFA:NWMULRDC")) != -1) {
 		switch (opt) {
@@ -930,13 +953,14 @@ int main(int argc, char **argv)
 	else {
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
 	rtlsdr_cancel_async(dev);
-	pthread_mutex_destroy(&data_ready);
-	pthread_mutex_destroy(&data_write);
+	//    pthread_mutex_destroy(&data_ready);
+	//    pthread_mutex_destroy(&data_write);
 
 	if (fm.file != stdout) {
 		fclose(fm.file);}
 
 	rtlsdr_close(dev);
+    free(fm.buf);
 	free (buffer);
 	return r >= 0 ? r : -r;
 }
