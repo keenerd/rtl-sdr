@@ -80,7 +80,7 @@ void usage(void)
 {
 	fprintf(stderr,
 		"rtl_adsb, a simple ADS-B decoder\n\n"
-		"Use:\trtl_adsb [-R] [-g gain] [-p ppm] [output file]\n"
+		"Use:\trtl_adsb [-g gain] [-p ppm] [output file]\n"
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-V verbove output (default: off)]\n"
 		"\t[-S show short frames (default: off)]\n"
