@@ -21,7 +21,7 @@ rtl_tcp_LDADD        = librtlsdr.la
 rtl_test_SOURCES      = rtl_test.c
 rtl_test_LDADD        = librtlsdr.la $(LIBM)
 
-rtl_fm_SOURCES      = rtl_fm.c
+rtl_fm_SOURCES      = rtl_fm.c ringbuffer.c
 rtl_fm_LDADD        = librtlsdr.la $(LIBM)
 
 rtl_eeprom_SOURCES      = rtl_eeprom.c
