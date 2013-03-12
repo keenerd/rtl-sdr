@@ -620,7 +620,7 @@ void full_demod(struct fm_state *fm)
 		dc_block_filter(fm);}
 	/* ignore under runs for now */
 	fwrite(fm->signal2, 2, fm->signal2_len, fm->file);
-	if (hop) {
+	if (hop && ringbuffer_is_empty((ringbuffer*)fm->buf)) { // Making sure the buffer is empty before tuning
 		freq_next = (fm->freq_now + 1) % fm->freq_len;
 		optimal_settings(fm, freq_next, 1);
 		fm->squelch_hits = fm->conseq_squelch + 1;  /* hair trigger */
