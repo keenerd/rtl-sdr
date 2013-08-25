@@ -110,6 +110,7 @@ void usage(void)
 		"\t[-i integration_interval (default: 10 seconds)]\n"
 		"\t (buggy if a full sweep takes longer than the interval)\n"
 		"\t[-1 enables single-shot mode (default: off)]\n"
+		"\t[-e exit_timer (default: off/0)]\n"
 		//"\t[-s avg/iir smoothing (default: avg)]\n"
 		//"\t[-t threads (default: 1)]\n"
 		"\t[-d device_index (default: 0)]\n"
@@ -272,44 +273,53 @@ void rms_power(struct tuning_state *ts)
 double atofs(char *f)
 /* standard suffixes */
 {
-	char* chop;
+	char last;
+	int len;
 	double suff = 1.0;
-	chop = malloc((strlen(f)+1)*sizeof(char));
-	strncpy(chop, f, strlen(f)-1);
-	switch (f[strlen(f)-1]) {
+	len = strlen(f);
+	last = f[len-1];
+	f[len-1] = '\0';
+	switch (last) {
+		case 'g':
 		case 'G':
 			suff *= 1e3;
+		case 'm':
 		case 'M':
 			suff *= 1e3;
 		case 'k':
 		case 'K':
 			suff *= 1e3;
-			suff *= atof(chop);
+			suff *= atof(f);
+			f[len-1] = last;
+			return suff;
 	}
-	free(chop);
-	if (suff != 1.0) {
-		return suff;}
+	f[len-1] = last;
 	return atof(f);
 }
 
 double atoft(char *f)
 /* time suffixes */
 {
-	char* chop;
-	double suff = 1;
-	chop = malloc((strlen(f)+1)*sizeof(char));
-	strncpy(chop, f, strlen(f)-1);
-	switch (f[strlen(f)-1]) {
+	char last;
+	int len;
+	double suff = 1.0;
+	len = strlen(f);
+	last = f[len-1];
+	f[len-1] = '\0';
+	switch (last) {
 		case 'h':
+		case 'H':
 			suff *= 60;
 		case 'm':
+		case 'M':
 			suff *= 60;
 		case 's':
-			suff *= atof(chop);
+		case 'S':
+			suff *= atof(f);
+			f[len-1] = last;
+			return suff;
 	}
-	free(chop);
-	if (suff != 1.0) {
-		return suff;}
+	f[len-1] = last;
 	return atof(f);
 }
 
@@ -497,10 +507,11 @@ int main(int argc, char **argv)
 	char vendor[256], product[256], serial[256];
 	time_t next_tick;
 	time_t time_now;
+	time_t exit_time = 0;
 	char t_str[50];
 	struct tm *cal_time;
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:1")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:1h")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			frequency_range(optarg);
@@ -513,6 +524,9 @@ int main(int argc, char **argv)
 			break;
 		case 'i':
 			interval = (int)round(atoft(optarg));
+			break;
+		case 'e':
+			exit_time = (time_t)((int)round(atoft(optarg)));
 			break;
 		case 's':
 			if (strcmp("avg",  optarg) == 0) {
@@ -529,6 +543,7 @@ int main(int argc, char **argv)
 		case '1':
 			single = 1;
 			break;
+		case 'h':
 		default:
 			usage();
 			break;
@@ -617,6 +632,8 @@ int main(int argc, char **argv)
 	rtlsdr_set_sample_rate(dev, (uint32_t)tunes[0].rate);
 	sine_table(tunes[0].bin_e);
 	next_tick = time(NULL) + interval;
+	if (exit_time) {
+		exit_time = time(NULL) + exit_time;}
 	fft_buf = malloc(tunes[0].buf_len * sizeof(int16_t));
 	while (!do_exit) {
 		scanner();
@@ -634,8 +651,9 @@ int main(int argc, char **argv)
 		while (time(NULL) >= next_tick) {
 			next_tick += interval;}
 		if (single) {
-			do_exit = 1;
-		}
+			do_exit = 1;}
+		if (exit_time && time(NULL) >= exit_time) {
+			do_exit = 1;}
 	}
 	
 	/* clean up */
@@ -649,7 +667,7 @@ int main(int argc, char **argv)
 		fclose(file);}
 
 	rtlsdr_close(dev);
-	//free(fft_buf);
+	free(fft_buf);
 	//for (i=0; i<tune_count; i++) {
 	//	free(tunes[i].avg);
 	//	free(tunes[i].buf8);
