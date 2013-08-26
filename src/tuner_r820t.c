@@ -49,28 +49,16 @@ int r820t_SetStandby(void *pTuner, int LoopThroughType)
 // The following context is implemented for R820T source code.
 
 /* just reverses the bits of a byte */
-int
-r820t_Convert(int InvertNum)
+int r820t_Convert(int i)
 {
-	int ReturnNum;
-	int AddNum;
-	int BitNum;
-	int CountNum;
-
-	ReturnNum = 0;
-	AddNum    = 0x80;
-	BitNum    = 0x01;
-
-	for(CountNum = 0;CountNum < 8;CountNum ++)
-	{
-		if(BitNum & InvertNum)
-			ReturnNum += AddNum;
-
-		AddNum /= 2;
-		BitNum *= 2;
-	}
-
-	return ReturnNum;
+	return ((i & 0x80) >> 7 |
+		(i & 0x40) >> 5 |
+		(i & 0x20) >> 3 |
+		(i & 0x10) >> 1 |
+		(i & 0x08) << 1 |
+		(i & 0x04) << 3 |
+		(i & 0x02) << 5 |
+		(i & 0x01) << 7);
 }
 
 R828_ErrCode
@@ -352,6 +340,7 @@ static Freq_Info_Type Freq_Info1;
 //----------------------------------------------------------//
 //                   Internal Functions                     //
 //----------------------------------------------------------//
+void R828_WriteHelper(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB);
 R828_ErrCode R828_Xtal_Check(void *pTuner);
 R828_ErrCode R828_InitReg(void *pTuner);
 R828_ErrCode R828_IMR_Prepare(void *pTuner);
@@ -373,6 +362,17 @@ SysFreq_Info_Type R828_SysFreq_Sel(R828_Standard_Type R828_Standard,UINT32 RF_fr
 
 R828_ErrCode R828_Filt_Cal(void *pTuner, UINT32 Cal_Freq,BW_Type R828_BW);
 //R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFreq_Type R828_SetFreqMode);
+
+/* Arry[i] = (Arry[i] & AndB) | OrB */
+void R828_WriteHelper(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB)
+{
+	// QUESTION RegAddr == ArryI + 5 ?
+	R828_I2C.RegAddr = RegAddr;
+	R828_Arry[ArryI] = (R828_Arry[ArryI] & AndB) | OrB;
+	R828_I2C.Data    = R828_Arry[ArryI];
+}
+
+#define I2C_WRITE_CHECK if(I2C_Write(pTuner, &R828_I2C) != RT_Success) {return RT_Fail;}
 
 Sys_Info_Type R828_Sys_Sel(R828_Standard_Type R828_Standard)
 {
@@ -479,6 +479,8 @@ Sys_Info_Type R828_Sys_Sel(R828_Standard_Type R828_Standard)
 
 	return R828_Sys_Info;
 }
+
+// QUESTION worth using a table here?
 
 Freq_Info_Type R828_Freq_Sel(UINT32 LO_freq)
 {
@@ -800,11 +802,23 @@ if ((Rafael_Chip==R820C) || (Rafael_Chip==R820T) || (Rafael_Chip==R828S))
 #endif
 	return R828_SysFreq_Info;
 	
-	}
+}
+
+static const int r820t_xcheck[][5]  = {
+	/* sentinel, cap def, reg 0x10 AND, reg 0x10 OR, delay */
+	{1, XTAL_LOW_CAP_20P, 0xFC, 0x02, 5},
+	{1, XTAL_LOW_CAP_10P, 0xFC, 0x01, 5},
+	{1, XTAL_LOW_CAP_0P,  0xFC, 0x00, 5},
+	{1, XTAL_HIGH_CAP_0P, 0xF7, 0x00, 20},
+	{2, 0, 0, 0, 0},
+	{0, 0, 0, 0, 0},
+};
 
 R828_ErrCode R828_Xtal_Check(void *pTuner)
 {
 	UINT8 ArrayNum;
+	UINT8 _xtal_tmp;
+	int i = 0;
 
 	ArrayNum = 27;
 	for(ArrayNum=0;ArrayNum<27;ArrayNum++)
@@ -813,161 +827,59 @@ R828_ErrCode R828_Xtal_Check(void *pTuner)
 	}
 
 	//cap 30pF & Drive Low
-	R828_I2C.RegAddr = 0x10;
-	R828_Arry[11]    = (R828_Arry[11] & 0xF4) | 0x0B ;
-	R828_I2C.Data    = R828_Arry[11];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-	    return RT_Fail;
+	_xtal_tmp = XTAL_LOW_CAP_30P;
+	R828_WriteHelper(0x10, 11, 0xF4, 0x0B);
+	I2C_WRITE_CHECK;
 
 	//set pll autotune = 128kHz
-	R828_I2C.RegAddr = 0x1A;
-	R828_Arry[21]    = R828_Arry[21] & 0xF3;
-	R828_I2C.Data    = R828_Arry[21];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1A, 21, 0xF3, 0x00);
+	I2C_WRITE_CHECK;
 
 	//set manual initial reg = 111111; 
-	R828_I2C.RegAddr = 0x13;
-	R828_Arry[14]    = (R828_Arry[14] & 0x80) | 0x7F;
-	R828_I2C.Data    = R828_Arry[14];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x13, 14, 0x80, 0x7F);
+	I2C_WRITE_CHECK;
 
 	//set auto
-	R828_I2C.RegAddr = 0x13;
-	R828_Arry[14]    = (R828_Arry[14] & 0xBF);
-	R828_I2C.Data    = R828_Arry[14];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x13, 14, 0xBF, 0x00);
+	I2C_WRITE_CHECK;
 	
 	R828_Delay_MS(pTuner, 5);
 
-	R828_I2C_Len.RegAddr = 0x00;
-	R828_I2C_Len.Len     = 3;
-	if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
-		return RT_Fail;
+	// unlock in sequence, until failure or complete success
+	while (r820t_xcheck[i][0]) {
 
-	// if 30pF unlock, set to cap 20pF
-#if (USE_16M_XTAL==TRUE)
-	//VCO=2360MHz for 16M Xtal. VCO band 26
-    if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
-#else
-	if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
-#endif
-	{
-		//cap 20pF 
-	    R828_I2C.RegAddr = 0x10;
-	    R828_Arry[11]    = (R828_Arry[11] & 0xFC) | 0x02;
-	    R828_I2C.Data    = R828_Arry[11];
-	    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		    return RT_Fail;
-
-		R828_Delay_MS(pTuner, 5);
-	
 		R828_I2C_Len.RegAddr = 0x00;
 		R828_I2C_Len.Len     = 3;
 		if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
-		    return RT_Fail;
+			return RT_Fail;
 
-		// if 20pF unlock, set to cap 10pF
 #if (USE_16M_XTAL==TRUE)
-        if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
+		//VCO=2360MHz for 16M Xtal. VCO band 26
+		if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
 #else
-	    if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
+		if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
 #endif
-	   {
-		   //cap 10pF 
-	       R828_I2C.RegAddr = 0x10;
-	       R828_Arry[11]    = (R828_Arry[11] & 0xFC) | 0x01;
-	       R828_I2C.Data    = R828_Arry[11];
-	       if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		       return RT_Fail;
-
-		   R828_Delay_MS(pTuner, 5);
-	
-		   R828_I2C_Len.RegAddr = 0x00;
-		   R828_I2C_Len.Len     = 3;
-		   if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
-		       return RT_Fail;
-
-		   // if 10pF unlock, set to cap 0pF
-#if (USE_16M_XTAL==TRUE)
-           if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
-#else
-	       if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
-#endif 
-	      {
-		      //cap 0pF 
-	          R828_I2C.RegAddr = 0x10;
-	          R828_Arry[11]    = (R828_Arry[11] & 0xFC) | 0x00;
-	          R828_I2C.Data    = R828_Arry[11];
-	          if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		          return RT_Fail;
-		
-		      R828_Delay_MS(pTuner, 5);
-	
-		      R828_I2C_Len.RegAddr = 0x00;
-		      R828_I2C_Len.Len     = 3;
-		      if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
-		           return RT_Fail;
-	
-		      // if unlock, set to high drive
-#if (USE_16M_XTAL==TRUE)
-               if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
-#else
-		      if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
-#endif 
-			  {
-				   //X'tal drive high
-	               R828_I2C.RegAddr = 0x10;
-	               R828_Arry[11]    = (R828_Arry[11] & 0xF7) ;
-	               R828_I2C.Data    = R828_Arry[11];
-	               if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-                          return RT_Fail;
-
-				   //R828_Delay_MS(15);
-				   R828_Delay_MS(pTuner, 20);
-	
-		           R828_I2C_Len.RegAddr = 0x00;
-		           R828_I2C_Len.Len     = 3;
-		           if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
-		                  return RT_Fail;
-
-#if (USE_16M_XTAL==TRUE)
-                   if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) > 29) || ((R828_I2C_Len.Data[2] & 0x3F) < 23)) 
-#else
-	               if(((R828_I2C_Len.Data[2] & 0x40) == 0x00) || ((R828_I2C_Len.Data[2] & 0x3F) == 0x3F)) 
-#endif
-				   {
-			             return RT_Fail;
-				   }
-				   else //0p+high drive lock
-				   {
-						Xtal_cap_sel_tmp = XTAL_HIGH_CAP_0P;
-				   }
-			  }
-		      else //0p lock
-			  {
-				   Xtal_cap_sel_tmp = XTAL_LOW_CAP_0P;
-			  }
-		   }
-		   else //10p lock
-		   {   
-			   Xtal_cap_sel_tmp = XTAL_LOW_CAP_10P;
-		   }
-		}
-		else //20p lock
 		{
-		   Xtal_cap_sel_tmp = XTAL_LOW_CAP_20P;
+			if (r820t_xcheck[i][0] == 2) {
+				return RT_Fail;}
 		}
-	}
-	else // 30p lock
-	{
-		Xtal_cap_sel_tmp = XTAL_LOW_CAP_30P;
-	}
+		else // best lock possible
+		{
+			Xtal_cap_sel_tmp = _xtal_tmp;
+			return RT_Success;
+		}
 
-    return RT_Success;
+		// set cap
+		_xtal_tmp = (UINT8)r820t_xcheck[i][1];
+		R828_WriteHelper(0x10, 11, (UINT8)r820t_xcheck[i][2], (UINT8)r820t_xcheck[i][3]);
+		I2C_WRITE_CHECK;
+
+		R828_Delay_MS(pTuner, r820t_xcheck[i][4]);
+		i++;
+	}
+	return RT_Fail;
 }	
+
 R828_ErrCode R828_Init(void *pTuner)
 {
 //	R820T_EXTRA_MODULE *pExtra;
@@ -1058,8 +970,6 @@ R828_ErrCode R828_Init(void *pTuner)
 	return RT_Success;
 }
 
-
-
 R828_ErrCode R828_InitReg(void *pTuner)
 {
 	UINT8 InitArryCount;
@@ -1083,7 +993,6 @@ R828_ErrCode R828_InitReg(void *pTuner)
 	return RT_Success;
 }
 
-
 R828_ErrCode R828_IMR_Prepare(void *pTuner)
 
 {
@@ -1097,65 +1006,35 @@ R828_ErrCode R828_IMR_Prepare(void *pTuner)
      }
      //IMR Preparation    
      //lna off (air-in off)
-     R828_I2C.RegAddr = 0x05;
-     R828_Arry[0]     = R828_Arry[0]  | 0x20;
-     R828_I2C.Data    = R828_Arry[0];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail; 
+	R828_WriteHelper(0x05, 0, 0xFF, 0x20);
+	I2C_WRITE_CHECK;
      //mixer gain mode = manual
-     R828_I2C.RegAddr = 0x07;
-     R828_Arry[2]     = (R828_Arry[2] & 0xEF);
-     R828_I2C.Data    = R828_Arry[2];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x07, 2, 0xEF, 0x00);
+	I2C_WRITE_CHECK;
      //filter corner = lowest
-     R828_I2C.RegAddr = 0x0A;
-     R828_Arry[5]     = R828_Arry[5] | 0x0F;
-     R828_I2C.Data    = R828_Arry[5];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x0A, 5, 0xFF, 0x0F);
+	I2C_WRITE_CHECK;
      //filter bw=+2cap, hp=5M
-     R828_I2C.RegAddr = 0x0B;
-     R828_Arry[6]    = (R828_Arry[6] & 0x90) | 0x60;
-     R828_I2C.Data    = R828_Arry[6];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x0B, 6, 0x90, 0x60);
+	I2C_WRITE_CHECK;
      //adc=on, vga code mode, gain = 26.5dB  
-     R828_I2C.RegAddr = 0x0C;
-     R828_Arry[7]    = (R828_Arry[7] & 0x60) | 0x0B;
-     R828_I2C.Data    = R828_Arry[7];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x0C, 7, 0x60, 0x0B);
+	I2C_WRITE_CHECK;
      //ring clk = on
-     R828_I2C.RegAddr = 0x0F;
-     R828_Arry[10]   &= 0xF7;
-     R828_I2C.Data    = R828_Arry[10];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x0F, 10, 0xF7, 0x00);
+	I2C_WRITE_CHECK;
      //ring power = on
-     R828_I2C.RegAddr = 0x18;
-     R828_Arry[19]    = R828_Arry[19] | 0x10;
-     R828_I2C.Data    = R828_Arry[19];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x18, 19, 0xFF, 0x10);
+	I2C_WRITE_CHECK;
      //from ring = ring pll in
-     R828_I2C.RegAddr = 0x1C;
-     R828_Arry[23]    = R828_Arry[23] | 0x02;
-     R828_I2C.Data    = R828_Arry[23];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x1C, 23, 0xFF, 0x02);
+	I2C_WRITE_CHECK;
      //sw_pdect = det3
-     R828_I2C.RegAddr = 0x1E;
-     R828_Arry[25]    = R828_Arry[25] | 0x80;
-     R828_I2C.Data    = R828_Arry[25];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-           return RT_Fail;
+	R828_WriteHelper(0x1E, 25, 0xFF, 0x80);
+	I2C_WRITE_CHECK;
 	// Set filt_3dB
-	R828_Arry[1]  = R828_Arry[1] | 0x20;  
-	R828_I2C.RegAddr  = 0x06;
-	R828_I2C.Data     = R828_Arry[1];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x06, 1, 0xFF, 0x20);
+	I2C_WRITE_CHECK;
 
       return RT_Success;
 }
@@ -1232,11 +1111,6 @@ R828_ErrCode R828_IMR(void *pTuner, UINT8 IMR_MEM, int IM_Flag)
 		R828_Arry[26]|=0x03;  // pw_ring 11
 		break;
 	case 4:
-		RingFreq = RingVCO/4;
-		R828_Arry[19]|=0x00;  // ring_se23 = 0
-		R828_Arry[20]|=0x00;  // ring_seldiv = 0
-		R828_Arry[26]|=0x01;  // pw_ring 01
-		break;
 	default:
 		RingFreq = RingVCO/4;
 		R828_Arry[19]|=0x00;  // ring_se23 = 0
@@ -1251,18 +1125,15 @@ R828_ErrCode R828_IMR(void *pTuner, UINT8 IMR_MEM, int IM_Flag)
 	//------------n_ring,ring_se23----------//
 	R828_I2C.RegAddr = 0x18;
 	R828_I2C.Data    = R828_Arry[19];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 	//------------ring_sediv----------------//
 	R828_I2C.RegAddr = 0x19;
 	R828_I2C.Data    = R828_Arry[20];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 	//------------pw_ring-------------------//
 	R828_I2C.RegAddr = 0x1f;
 	R828_I2C.Data    = R828_Arry[26];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 	
 	//Must do before PLL() 
 	if(R828_MUX(pTuner, RingFreq - 5300) != RT_Success)				//MUX input freq ~ RF_in Freq
@@ -1289,31 +1160,15 @@ R828_ErrCode R828_IMR(void *pTuner, UINT8 IMR_MEM, int IM_Flag)
 	switch(IMR_MEM)
 	{
 	case 0:
-		IMR_Data[0].Gain_X  = IMR_POINT.Gain_X;
-		IMR_Data[0].Phase_Y = IMR_POINT.Phase_Y;
-		IMR_Data[0].Value   = IMR_POINT.Value;
-		break;
 	case 1:
-		IMR_Data[1].Gain_X  = IMR_POINT.Gain_X;
-		IMR_Data[1].Phase_Y = IMR_POINT.Phase_Y;
-		IMR_Data[1].Value   = IMR_POINT.Value;
-		break;
 	case 2:
-		IMR_Data[2].Gain_X  = IMR_POINT.Gain_X;
-		IMR_Data[2].Phase_Y = IMR_POINT.Phase_Y;
-		IMR_Data[2].Value   = IMR_POINT.Value;
-		break;
 	case 3:
-		IMR_Data[3].Gain_X  = IMR_POINT.Gain_X;
-		IMR_Data[3].Phase_Y = IMR_POINT.Phase_Y;
-		IMR_Data[3].Value   = IMR_POINT.Value;
-		break;
 	case 4:
-		IMR_Data[4].Gain_X  = IMR_POINT.Gain_X;
-		IMR_Data[4].Phase_Y = IMR_POINT.Phase_Y;
-		IMR_Data[4].Value   = IMR_POINT.Value;
+		IMR_Data[IMR_MEM].Gain_X  = IMR_POINT.Gain_X;
+		IMR_Data[IMR_MEM].Phase_Y = IMR_POINT.Phase_Y;
+		IMR_Data[IMR_MEM].Value   = IMR_POINT.Value;
 		break;
-    default:
+	default:
 		IMR_Data[4].Gain_X  = IMR_POINT.Gain_X;
 		IMR_Data[4].Phase_Y = IMR_POINT.Phase_Y;
 		IMR_Data[4].Value   = IMR_POINT.Value;
@@ -1397,22 +1252,19 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 
 	R828_I2C.RegAddr = 0x10;
 	R828_I2C.Data = R828_Arry[11];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	//set pll autotune = 128kHz
 	R828_I2C.RegAddr = 0x1A;
 	R828_Arry[21]    = R828_Arry[21] & 0xF3;
 	R828_I2C.Data    = R828_Arry[21];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	//Set VCO current = 100
 	R828_I2C.RegAddr = 0x12;
 	R828_Arry[13]    = (R828_Arry[13] & 0x1F) | 0x80; 
 	R828_I2C.Data    = R828_Arry[13];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	//Divider
 	while(MixDiv <= 64)
@@ -1442,12 +1294,8 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	else if(VCO_fine_tune < VCO_pwr_ref)
 	    DivNum = DivNum + 1; 
 	
-	R828_I2C.RegAddr = 0x10;
-	R828_Arry[11] &= 0x1F;
-	R828_Arry[11] |= (DivNum << 5);
-	R828_I2C.Data = R828_Arry[11];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x10, 11, 0x1F, DivNum << 5);
+	I2C_WRITE_CHECK;
 
 	VCO_Freq = (uint64_t)(LO_Freq * (uint64_t)MixDiv);
 	Nint     = (UINT8) (VCO_Freq / 2 / PLL_Ref);
@@ -1481,22 +1329,15 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	//N & S
 	Ni       = (Nint - 13) / 4;
 	Si       = Nint - 4 *Ni - 13;
-	R828_I2C.RegAddr = 0x14;
-	R828_Arry[15]  = 0x00;
-	R828_Arry[15] |= (Ni + (Si << 6));
-	R828_I2C.Data = R828_Arry[15];
-	
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-	  return RT_Fail;
+	R828_WriteHelper(0x14, 15, 0x00, Ni + (Si << 6));
+	I2C_WRITE_CHECK;
 
 	//pw_sdm
-	R828_I2C.RegAddr = 0x12;
-	R828_Arry[13] &= 0xF7;
 	if(VCO_Fra == 0)
-		R828_Arry[13] |= 0x08;
-	R828_I2C.Data = R828_Arry[13];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+		R828_WriteHelper(0x12, 13, 0xF7, 0x08);
+	else
+		R828_WriteHelper(0x12, 13, 0xF7, 0x00);
+	I2C_WRITE_CHECK;
 
 	//SDM calculator
 	while(VCO_Fra > 1)
@@ -1514,16 +1355,11 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	SDM16to9 = SDM >> 8;
 	SDM8to1 =  SDM - (SDM16to9 << 8);
 
-	R828_I2C.RegAddr = 0x16;
-	R828_Arry[17]    = (UINT8) SDM16to9;
-	R828_I2C.Data    = R828_Arry[17];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-	R828_I2C.RegAddr = 0x15;
-	R828_Arry[16]    = (UINT8) SDM8to1;
-	R828_I2C.Data    = R828_Arry[16];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x16, 17, 0x00, (UINT8) SDM16to9);
+	I2C_WRITE_CHECK;
+
+	R828_WriteHelper(0x15, 16, 0x00, (UINT8) SDM8to1);
+	I2C_WRITE_CHECK;
 
 //	R828_Delay_MS(10);
 	
@@ -1548,21 +1384,15 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	if( (R828_I2C_Len.Data[2] & 0x40) == 0x00 )
 	{
 		fprintf(stderr, "[R820T] PLL not locked for %u Hz!\n", LO_Freq);
-		R828_I2C.RegAddr = 0x12;
-		R828_Arry[13]    = (R828_Arry[13] & 0x1F) | 0x60;  //increase VCO current
-		R828_I2C.Data    = R828_Arry[13];
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		R828_WriteHelper(0x12, 13, 0x1F, 0x60);  //increase VCO current
+		I2C_WRITE_CHECK;
 
 		return RT_Fail;
 	}
 
 	//set pll autotune = 8kHz
-	R828_I2C.RegAddr = 0x1A;
-	R828_Arry[21]    = R828_Arry[21] | 0x08;
-	R828_I2C.Data    = R828_Arry[21];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1A, 21, 0xFF, 0x08);
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -1579,82 +1409,57 @@ R828_ErrCode R828_MUX(void *pTuner, UINT32 RF_KHz)
 	Freq_Info1 = R828_Freq_Sel(RF_KHz);
 
 	// Open Drain
-	R828_I2C.RegAddr = 0x17;
-	R828_Arry[18] = (R828_Arry[18] & 0xF7) | Freq_Info1.OPEN_D;
-	R828_I2C.Data = R828_Arry[18];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x17, 18, 0xF7, Freq_Info1.OPEN_D);
+	I2C_WRITE_CHECK;
 
 	// RF_MUX,Polymux 
-	R828_I2C.RegAddr = 0x1A;
-	R828_Arry[21] = (R828_Arry[21] & 0x3C) | Freq_Info1.RF_MUX_PLOY;
-	R828_I2C.Data = R828_Arry[21];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1A, 21, 0x3C, Freq_Info1.RF_MUX_PLOY);
+	I2C_WRITE_CHECK;
 
 	// TF BAND
-	R828_I2C.RegAddr = 0x1B;
-	R828_Arry[22] &= 0x00;
-	R828_Arry[22] |= Freq_Info1.TF_C;	
-	R828_I2C.Data = R828_Arry[22];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1B, 22, 0x00, Freq_Info1.TF_C);
+	I2C_WRITE_CHECK;
 
 	// XTAL CAP & Drive
-	R828_I2C.RegAddr = 0x10;
-	R828_Arry[11] &= 0xF4;
 	switch(Xtal_cap_sel)
 	{
 	   case XTAL_LOW_CAP_30P:
 	   case XTAL_LOW_CAP_20P:
-		   R828_Arry[11] = R828_Arry[11] | Freq_Info1.XTAL_CAP20P | 0x08;
+		R828_WriteHelper(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP20P | 0x08);
 		   break;
 
 	   case XTAL_LOW_CAP_10P:
-	   R828_Arry[11] = R828_Arry[11] | Freq_Info1.XTAL_CAP10P | 0x08;
+		R828_WriteHelper(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP10P | 0x08);
 		   break;
 
 	   case XTAL_LOW_CAP_0P:
-		   R828_Arry[11] = R828_Arry[11] | Freq_Info1.XTAL_CAP0P | 0x08;
+		R828_WriteHelper(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x08);
 		   break;
 	
 	   case XTAL_HIGH_CAP_0P:
-		   R828_Arry[11] = R828_Arry[11] | Freq_Info1.XTAL_CAP0P | 0x00;
+		R828_WriteHelper(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x00);
 		   break;
 
 	   default:
-	       R828_Arry[11] = R828_Arry[11] | Freq_Info1.XTAL_CAP0P | 0x08;
+		R828_WriteHelper(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x08);
 		   break;
 	}
-	R828_I2C.Data    = R828_Arry[11];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	//Set_IMR
+	RT_Reg08 = 0;
+	RT_Reg09 = 0;
 	if(R828_IMR_done_flag == TRUE)
 	{
 		RT_Reg08 = IMR_Data[Freq_Info1.IMR_MEM].Gain_X & 0x3F;
 		RT_Reg09 = IMR_Data[Freq_Info1.IMR_MEM].Phase_Y & 0x3F;
 	}
-	else
-	{
-		RT_Reg08 = 0;
-	    RT_Reg09 = 0;
-	}
 
-	R828_I2C.RegAddr = 0x08;
-	R828_Arry[3] = R828_iniArry[3] & 0xC0;
-	R828_Arry[3] = R828_Arry[3] | RT_Reg08;
-	R828_I2C.Data = R828_Arry[3];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x08, 3, 0xC0, RT_Reg08);
+	I2C_WRITE_CHECK;
 
-	R828_I2C.RegAddr = 0x09;
-	R828_Arry[4] = R828_iniArry[4] & 0xC0;
-	R828_Arry[4] = R828_Arry[4] | RT_Reg09;
-	R828_I2C.Data =R828_Arry[4]  ;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x09, 4, 0xC0, RT_Reg09);
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -1676,8 +1481,7 @@ R828_ErrCode R828_IQ(void *pTuner, R828_SectType* IQ_Pont)
 	{
 		R828_I2C.RegAddr = 0x0C;
 		R828_I2C.Data    = (R828_Arry[7] & 0xF0) + VGA_Count;  
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		I2C_WRITE_CHECK;
 
 		R828_Delay_MS(pTuner, 10); //
 		
@@ -1839,13 +1643,11 @@ R828_ErrCode R828_IQ(void *pTuner, R828_SectType* IQ_Pont)
 	//reset gain/phase control setting
 	R828_I2C.RegAddr = 0x08;
 	R828_I2C.Data    = R828_iniArry[3] & 0xC0; //Jason
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	R828_I2C.RegAddr = 0x09;
 	R828_I2C.Data    = R828_iniArry[4] & 0xC0;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -1880,13 +1682,11 @@ R828_ErrCode R828_IQ_Tree(void *pTuner, UINT8 FixPot, UINT8 FlucPot, UINT8 PotRe
 	{
 		R828_I2C.RegAddr = PotReg;
 		R828_I2C.Data    = FixPot;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		I2C_WRITE_CHECK;
 
 		R828_I2C.RegAddr = PntReg;
 		R828_I2C.Data    = FlucPot;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		I2C_WRITE_CHECK;
 
 		if(R828_Muti_Read(pTuner, 0x01, &CompareTree[TreeCount].Value) != RT_Success)
 			return RT_Fail;
@@ -1978,13 +1778,11 @@ R828_ErrCode R828_CompreStep(void *pTuner, R828_SectType* StepArry, UINT8 Pace)
 	
 		R828_I2C.RegAddr = 0x08;
 		R828_I2C.Data    = StepTemp.Gain_X ;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		I2C_WRITE_CHECK;
 
 		R828_I2C.RegAddr = 0x09;
 		R828_I2C.Data    = StepTemp.Phase_Y;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		I2C_WRITE_CHECK;
 
 		if(R828_Muti_Read(pTuner, 0x01, &StepTemp.Value) != RT_Success)
 			return RT_Fail;
@@ -2120,7 +1918,7 @@ R828_ErrCode R828_Section(void *pTuner, R828_SectType* IQ_Pont)
 
 R828_ErrCode R828_IMR_Cross(void *pTuner, R828_SectType* IQ_Pont, UINT8* X_Direct)
 {
-
+	int cross_offset = 0;
 	R828_SectType Compare_Cross[5]; //(0,0)(0,Q-1)(0,I-1)(Q-1,0)(I-1,0)
 	R828_SectType Compare_Temp;
 	UINT8 CrossCount;
@@ -2169,13 +1967,11 @@ R828_ErrCode R828_IMR_Cross(void *pTuner, R828_SectType* IQ_Pont, UINT8* X_Direc
 
     	R828_I2C.RegAddr = 0x08;
 	    R828_I2C.Data    = Compare_Cross[CrossCount].Gain_X;
-	    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		   return RT_Fail;
+		I2C_WRITE_CHECK;
 
 	    R828_I2C.RegAddr = 0x09;
 	    R828_I2C.Data    = Compare_Cross[CrossCount].Phase_Y;
-	    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		  return RT_Fail;
+		I2C_WRITE_CHECK;
 	
         if(R828_Muti_Read(pTuner, 0x01, &Compare_Cross[CrossCount].Value) != RT_Success)
 		  return RT_Fail;
@@ -2192,33 +1988,25 @@ R828_ErrCode R828_IMR_Cross(void *pTuner, R828_SectType* IQ_Pont, UINT8* X_Direc
     if((Compare_Temp.Phase_Y & 0x1F)==1)  //y-direction
 	{
       *X_Direct = (UINT8) 0;
-	  IQ_Pont[0].Gain_X = Compare_Cross[0].Gain_X;
-	  IQ_Pont[0].Phase_Y = Compare_Cross[0].Phase_Y;
-	  IQ_Pont[0].Value = Compare_Cross[0].Value;
-
-	  IQ_Pont[1].Gain_X = Compare_Cross[1].Gain_X;
-	  IQ_Pont[1].Phase_Y = Compare_Cross[1].Phase_Y;
-	  IQ_Pont[1].Value = Compare_Cross[1].Value;
-
-	  IQ_Pont[2].Gain_X = Compare_Cross[2].Gain_X;
-	  IQ_Pont[2].Phase_Y = Compare_Cross[2].Phase_Y;
-	  IQ_Pont[2].Value = Compare_Cross[2].Value;
+	  cross_offset = 0;
 	}
 	else //(0,0) or x-direction
 	{	
 	  *X_Direct = (UINT8) 1;
+	  cross_offset = 2;
+	}
 	  IQ_Pont[0].Gain_X = Compare_Cross[0].Gain_X;
 	  IQ_Pont[0].Phase_Y = Compare_Cross[0].Phase_Y;
 	  IQ_Pont[0].Value = Compare_Cross[0].Value;
 
-	  IQ_Pont[1].Gain_X = Compare_Cross[3].Gain_X;
-	  IQ_Pont[1].Phase_Y = Compare_Cross[3].Phase_Y;
-	  IQ_Pont[1].Value = Compare_Cross[3].Value;
+	  IQ_Pont[1].Gain_X = Compare_Cross[1 + cross_offset].Gain_X;
+	  IQ_Pont[1].Phase_Y = Compare_Cross[1 + cross_offset].Phase_Y;
+	  IQ_Pont[1].Value = Compare_Cross[1 + cross_offset].Value;
 
-	  IQ_Pont[2].Gain_X = Compare_Cross[4].Gain_X;
-	  IQ_Pont[2].Phase_Y = Compare_Cross[4].Phase_Y;
-	  IQ_Pont[2].Value = Compare_Cross[4].Value;
-	}
+	  IQ_Pont[2].Gain_X = Compare_Cross[2 + cross_offset].Gain_X;
+	  IQ_Pont[2].Phase_Y = Compare_Cross[2 + cross_offset].Phase_Y;
+	  IQ_Pont[2].Value = Compare_Cross[2 + cross_offset].Value;
+
 	return RT_Success;
 }
 
@@ -2242,10 +2030,8 @@ R828_ErrCode R828_F_IMR(void *pTuner, R828_SectType* IQ_Pont)
 	//VGA
 	for(VGA_Count = 12;VGA_Count < 16;VGA_Count ++)
 	{
-		R828_I2C.RegAddr = 0x0C;
-        R828_I2C.Data    = (R828_Arry[7] & 0xF0) + VGA_Count;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		R828_WriteHelper(0x0C, 7, 0xF0, VGA_Count);
+		I2C_WRITE_CHECK;
 
 		R828_Delay_MS(pTuner, 10);
 		
@@ -2317,14 +2103,11 @@ R828_ErrCode R828_F_IMR(void *pTuner, R828_SectType* IQ_Pont)
 R828_ErrCode R828_GPIO(void *pTuner, R828_GPIO_Type R828_GPIO_Conrl)
 {
 	if(R828_GPIO_Conrl == HI_SIG)
-		R828_Arry[10] |= 0x01;
+		{R828_WriteHelper(0x0F, 10, 0xFF, 0x01);}
 	else
-		R828_Arry[10] &= 0xFE;
+		{R828_WriteHelper(0x0F, 10, 0xFE, 0x00);}
 
-	R828_I2C.RegAddr = 0x0F;
-	R828_I2C.Data    = R828_Arry[10];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -2343,32 +2126,23 @@ R828_ErrCode R828_SetStandard(void *pTuner, R828_Standard_Type RT_Standard)
 
 
 	// Record Init Flag & Xtal_check Result
-	if(R828_IMR_done_flag == TRUE)
-        R828_Arry[7]    = (R828_Arry[7] & 0xF0) | 0x01 | (Xtal_cap_sel<<1);
-	else
-	    R828_Arry[7]    = (R828_Arry[7] & 0xF0) | 0x00;
-
-	R828_I2C.RegAddr = 0x0C;
-    R828_I2C.Data    = R828_Arry[7];
-    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-       return RT_Fail;
+	if(R828_IMR_done_flag == TRUE) {
+		R828_WriteHelper(0x0C, 7, 0xF0, 0x01 | (Xtal_cap_sel<<1));
+	} else {
+		R828_WriteHelper(0x0C, 7, 0xF0, 0x00);
+	}
+	I2C_WRITE_CHECK;
 
 	// Record version
-	R828_I2C.RegAddr = 0x13;
-	R828_Arry[14]    = (R828_Arry[14] & 0xC0) | VER_NUM;
-	R828_I2C.Data    = R828_Arry[14];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-	    return RT_Fail;
+	R828_WriteHelper(0x13, 14, 0xC0, VER_NUM);
+	I2C_WRITE_CHECK;
 
 
     //for LT Gain test
 	if(RT_Standard > SECAM_L1)
 	{
-		R828_I2C.RegAddr = 0x1D;  //[5:3] LNA TOP
-		R828_I2C.Data = (R828_Arry[24] & 0xC7) | 0x00;
-	    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		    return RT_Fail;
-
+		R828_WriteHelper(0x1D, 24, 0xC7, 0x00);  //[5:3] LNA TOP
+		I2C_WRITE_CHECK;
 		//R828_Delay_MS(1);
 	}
 
@@ -2414,69 +2188,42 @@ R828_ErrCode R828_SetStandard(void *pTuner, R828_Standard_Type RT_Standard)
 	}
 
 	// Set Filter Q
-	R828_Arry[5]  = (R828_Arry[5] & 0xE0) | Sys_Info1.FILT_Q | R828_Fil_Cal_code[RT_Standard];  
-	R828_I2C.RegAddr  = 0x0A;
-	R828_I2C.Data     = R828_Arry[5];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0A, 5, 0xE0, Sys_Info1.FILT_Q | R828_Fil_Cal_code[RT_Standard]);
+	I2C_WRITE_CHECK;
 
 	// Set BW, Filter_gain, & HP corner
-	R828_Arry[6]= (R828_Arry[6] & 0x10) | Sys_Info1.HP_COR;
-	R828_I2C.RegAddr  = 0x0B;
-	R828_I2C.Data     = R828_Arry[6];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0B, 6, 0x10, Sys_Info1.HP_COR);
+	I2C_WRITE_CHECK;
 
 	// Set Img_R
-	R828_Arry[2]  = (R828_Arry[2] & 0x7F) | Sys_Info1.IMG_R;  
-	R828_I2C.RegAddr  = 0x07;
-	R828_I2C.Data     = R828_Arry[2];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x07, 2, 0x7F, Sys_Info1.IMG_R);
+	I2C_WRITE_CHECK;
 
 
 	// Set filt_3dB, V6MHz
-	R828_Arry[1]  = (R828_Arry[1] & 0xCF) | Sys_Info1.FILT_GAIN;  
-	R828_I2C.RegAddr  = 0x06;
-	R828_I2C.Data     = R828_Arry[1];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x06, 1, 0xCF, Sys_Info1.FILT_GAIN);
+	I2C_WRITE_CHECK;
 
     //channel filter extension
-	R828_Arry[25]  = (R828_Arry[25] & 0x9F) | Sys_Info1.EXT_ENABLE;  
-	R828_I2C.RegAddr  = 0x1E;
-	R828_I2C.Data     = R828_Arry[25];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1E, 25, 0x9F, Sys_Info1.EXT_ENABLE);
+	I2C_WRITE_CHECK;
 
 
 	//Loop through
-	R828_Arry[0]  = (R828_Arry[0] & 0x7F) | Sys_Info1.LOOP_THROUGH;  
-	R828_I2C.RegAddr  = 0x05;
-	R828_I2C.Data     = R828_Arry[0];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x05, 0, 0x7F, Sys_Info1.LOOP_THROUGH);
+	I2C_WRITE_CHECK;
 
 	//Loop through attenuation
-	R828_Arry[26]  = (R828_Arry[26] & 0x7F) | Sys_Info1.LT_ATT;  
-	R828_I2C.RegAddr  = 0x1F;
-	R828_I2C.Data     = R828_Arry[26];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x1F, 26, 0x7F, Sys_Info1.LT_ATT);
+	I2C_WRITE_CHECK;
 
     //filter extention widest
-	R828_Arry[10]  = (R828_Arry[10] & 0x7F) | Sys_Info1.FLT_EXT_WIDEST;  
-	R828_I2C.RegAddr  = 0x0F;
-	R828_I2C.Data     = R828_Arry[10];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0F, 10, 0x7F, Sys_Info1.FLT_EXT_WIDEST);
+	I2C_WRITE_CHECK;
 
 	//RF poly filter current
-	R828_Arry[20]  = (R828_Arry[20] & 0x9F) | Sys_Info1.POLYFIL_CUR;  
-	R828_I2C.RegAddr  = 0x19;
-	R828_I2C.Data     = R828_Arry[20];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x19, 20, 0x9F, Sys_Info1.POLYFIL_CUR);
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -2488,85 +2235,56 @@ R828_ErrCode R828_Filt_Cal(void *pTuner, UINT32 Cal_Freq,BW_Type R828_BW)
 	if(R828_BW == BW_8M)
 	{
 		//set filt_cap = no cap
-		R828_I2C.RegAddr = 0x0B;  //reg11
-		R828_Arry[6]   &= 0x9F;  //filt_cap = no cap
-		R828_I2C.Data    = R828_Arry[6];		
+		R828_WriteHelper(0x0B, 6, 0x9F, 0x00);
 	}
 	else if(R828_BW == BW_7M)
 	{
 		//set filt_cap = +1 cap
-		R828_I2C.RegAddr = 0x0B;  //reg11
-		R828_Arry[6]   &= 0x9F;  //filt_cap = no cap
-		R828_Arry[6]   |= 0x20;  //filt_cap = +1 cap
-		R828_I2C.Data    = R828_Arry[6];		
+		R828_WriteHelper(0x0B, 6, 0x9F, 0x20);
 	}
 	else if(R828_BW == BW_6M)
 	{
 		//set filt_cap = +2 cap
-		R828_I2C.RegAddr = 0x0B;  //reg11
-		R828_Arry[6]   &= 0x9F;  //filt_cap = no cap
-		R828_Arry[6]   |= 0x60;  //filt_cap = +2 cap
-		R828_I2C.Data    = R828_Arry[6];		
+		R828_WriteHelper(0x0B, 6, 0x9F, 0x60);
 	}
 
-
-    if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;	
+	I2C_WRITE_CHECK;
 */
 
     // Set filt_cap
-	R828_I2C.RegAddr  = 0x0B;
-	R828_Arry[6]= (R828_Arry[6] & 0x9F) | (Sys_Info1.HP_COR & 0x60);
-	R828_I2C.Data     = R828_Arry[6];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0B, 6, 0x9F, Sys_Info1.HP_COR & 0x60);
+	I2C_WRITE_CHECK;
 
 
 	//set cali clk =on
-	R828_I2C.RegAddr = 0x0F;  //reg15
-	R828_Arry[10]   |= 0x04;  //calibration clk=on
-	R828_I2C.Data    = R828_Arry[10];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0F, 10, 0xFF, 0x04);
+	I2C_WRITE_CHECK;
 
 	//X'tal cap 0pF for PLL
-	R828_I2C.RegAddr = 0x10;
-	R828_Arry[11]    = (R828_Arry[11] & 0xFC) | 0x00;
-	R828_I2C.Data    = R828_Arry[11];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x10, 11, 0xFC, 0x00);
+	I2C_WRITE_CHECK;
 
 	//Set PLL Freq = Filter Cali Freq
 	if(R828_PLL(pTuner, Cal_Freq * 1000, STD_SIZE) != RT_Success)
 		return RT_Fail;
 
-	//Start Trigger
-	R828_I2C.RegAddr = 0x0B;	//reg11
-	R828_Arry[6]   |= 0x10;	    //vstart=1	
-	R828_I2C.Data    = R828_Arry[6];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	//Start Trigger, vstart=1
+	R828_WriteHelper(0x0B, 6, 0xFF, 0x10);
+	I2C_WRITE_CHECK;
 
 	//delay 0.5ms
 	R828_Delay_MS(pTuner, 1);  
 
-	//Stop Trigger
-	R828_I2C.RegAddr = 0x0B;
-	R828_Arry[6]   &= 0xEF;     //vstart=0
-	R828_I2C.Data    = R828_Arry[6];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	//Stop Trigger, vstart=0
+	R828_WriteHelper(0x0B, 6, 0xEF, 0x00);
+	I2C_WRITE_CHECK;
 
 
 	//set cali clk =off
-	R828_I2C.RegAddr  = 0x0F;	//reg15
-	R828_Arry[10]    &= 0xFB;	//calibration clk=off
-	R828_I2C.Data     = R828_Arry[10];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x0F, 10, 0xFB, 0x00);
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
-
 }
 
 R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFreq_Type R828_SetFreqMode)
@@ -2602,185 +2320,91 @@ R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFr
 
     
      // write DectBW, pre_dect_TOP
-     R828_Arry[24] = (R828_Arry[24] & 0x38) | (SysFreq_Info1.LNA_TOP & 0xC7);
-     R828_I2C.RegAddr = 0x1D;
-     R828_I2C.Data = R828_Arry[24];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-         return RT_Fail;
+	R828_WriteHelper(0x1D, 24, 0x38, SysFreq_Info1.LNA_TOP & 0xC7);
+	I2C_WRITE_CHECK;
 
      // write MIXER TOP, TOP+-1
-     R828_Arry[23] = (R828_Arry[23] & 0x07) | (SysFreq_Info1.MIXER_TOP & 0xF8); 
-     R828_I2C.RegAddr = 0x1C;
-     R828_I2C.Data = R828_Arry[23];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-        return RT_Fail;
+	R828_WriteHelper(0x1C, 23, 0x07, SysFreq_Info1.MIXER_TOP & 0xF8);
+	I2C_WRITE_CHECK;
 
 
      // write LNA VTHL
-     R828_Arry[8] = (R828_Arry[8] & 0x00) | SysFreq_Info1.LNA_VTH_L;
-     R828_I2C.RegAddr = 0x0D;
-     R828_I2C.Data = R828_Arry[8];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-        return RT_Fail;
+	R828_WriteHelper(0x0D, 8, 0x00, SysFreq_Info1.LNA_VTH_L);
+	I2C_WRITE_CHECK;
 
      // write MIXER VTHL
-     R828_Arry[9] = (R828_Arry[9] & 0x00) | SysFreq_Info1.MIXER_VTH_L;
-     R828_I2C.RegAddr = 0x0E;
-     R828_I2C.Data = R828_Arry[9];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-        return RT_Fail;
+	R828_WriteHelper(0x0E, 9, 0x00, SysFreq_Info1.MIXER_VTH_L);
+	I2C_WRITE_CHECK;
 
 	 // Cable-1/Air in 
-	 R828_I2C.RegAddr = 0x05;
-	 R828_Arry[0] &= 0x9F;
-	 R828_Arry[0] |= SysFreq_Info1.AIR_CABLE1_IN;
-	 R828_I2C.Data = R828_Arry[0];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x05, 0, 0x9F, SysFreq_Info1.AIR_CABLE1_IN);
+	I2C_WRITE_CHECK;
 
 	 // Cable-2 in 
-	 R828_I2C.RegAddr = 0x06;
-	 R828_Arry[1] &= 0xF7;
-	 R828_Arry[1] |= SysFreq_Info1.CABLE2_IN;
-	 R828_I2C.Data = R828_Arry[1];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x06, 1, 0xF7, SysFreq_Info1.CABLE2_IN);
+	I2C_WRITE_CHECK;
 
      //CP current
-	 R828_I2C.RegAddr = 0x11;
-	 R828_Arry[12] &= 0xC7;
-	 R828_Arry[12] |= SysFreq_Info1.CP_CUR;	
-	 R828_I2C.Data = R828_Arry[12];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		 return RT_Fail;	
+	R828_WriteHelper(0x11, 12, 0xC7, SysFreq_Info1.CP_CUR);
+	I2C_WRITE_CHECK;
 
 	 //div buffer current
-	 R828_I2C.RegAddr = 0x17;
-	 R828_Arry[18] &= 0xCF;
-	 R828_Arry[18] |= SysFreq_Info1.DIV_BUF_CUR;
-	 R828_I2C.Data = R828_Arry[18];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		 return RT_Fail;	
+	R828_WriteHelper(0x17, 18, 0xCF, SysFreq_Info1.DIV_BUF_CUR);
+	I2C_WRITE_CHECK;
 
 	 // Set channel filter current 
-	 R828_I2C.RegAddr  = 0x0A;
-	 R828_Arry[5]  = (R828_Arry[5] & 0x9F) | SysFreq_Info1.FILTER_CUR;  
-	 R828_I2C.Data     = R828_Arry[5];
-     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-         return RT_Fail;
+	R828_WriteHelper(0x0A, 5, 0x9F, SysFreq_Info1.FILTER_CUR);
+	I2C_WRITE_CHECK;
 
      //Air-In only for Astrometa
-	 R828_Arry[0] =  (R828_Arry[0] & 0x9F) | 0x00;
-     R828_Arry[1] =  (R828_Arry[1] & 0xF7) | 0x00;
+	R828_WriteHelper(0x05, 0, 0x9F, 0x00);
+	I2C_WRITE_CHECK;
 
-	 R828_I2C.RegAddr = 0x05;
-     R828_I2C.Data = R828_Arry[0];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
-
-	 R828_I2C.RegAddr = 0x06;
-     R828_I2C.Data = R828_Arry[1];
-	 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+	R828_WriteHelper(0x06, 1, 0xF7, 0x00);
+	I2C_WRITE_CHECK;
 
      //Set LNA
 	 if(R828_INFO.R828_Standard > SECAM_L1)
 	 {
+		// FAST or NORMAL mode
+		//R828_WriteHelper(0x1D, 24, 0xC7, 0x20);  //LNA TOP:4
+		R828_WriteHelper(0x1D, 24, 0xC7, 0x00);  //LNA TOP:lowest
+		I2C_WRITE_CHECK;
 
-		 if(R828_SetFreqMode==FAST_MODE)       //FAST mode 
+		R828_WriteHelper(0x1C, 23, 0xFB, 0x00);  // 0: normal mode
+		I2C_WRITE_CHECK;
+		
+		R828_WriteHelper(0x06, 1, 0xBF, 0x00);  //0: PRE_DECT off
+		I2C_WRITE_CHECK;
+
+		R828_WriteHelper(0x1A, 21, 0xCF, 0x30);  // agc clk 250hz
+		I2C_WRITE_CHECK;
+
+		if(R828_SetFreqMode != FAST_MODE)  // NORMAL mode 
 		 {
-			 //R828_Arry[24] = (R828_Arry[24] & 0xC7) | 0x20; //LNA TOP:4
-			 R828_Arry[24] = (R828_Arry[24] & 0xC7) | 0x00; //LNA TOP:lowest
-			 R828_I2C.RegAddr = 0x1D;
-			 R828_I2C.Data = R828_Arry[24];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				 return RT_Fail;
-
-			 R828_Arry[23] = (R828_Arry[23] & 0xFB);  // 0: normal mode
-			 R828_I2C.RegAddr = 0x1C;
-			 R828_I2C.Data = R828_Arry[23];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-			
-			 R828_Arry[1]  = (R828_Arry[1] & 0xBF);   //0: PRE_DECT off
-			 R828_I2C.RegAddr  = 0x06;
-			 R828_I2C.Data     = R828_Arry[1];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-
-			 //agc clk 250hz
-			 R828_Arry[21]  = (R828_Arry[21] & 0xCF) | 0x30;
-			 R828_I2C.RegAddr  = 0x1A;
-			 R828_I2C.Data     = R828_Arry[21];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-		 }
-		 else  //NORMAL mode
-		 {
-			 			
-			 R828_Arry[24] = (R828_Arry[24] & 0xC7) | 0x00; //LNA TOP:lowest
-			 R828_I2C.RegAddr = 0x1D;
-			 R828_I2C.Data = R828_Arry[24];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				 return RT_Fail;
-
-			 R828_Arry[23] = (R828_Arry[23] & 0xFB);  // 0: normal mode
-			 R828_I2C.RegAddr = 0x1C;
-			 R828_I2C.Data = R828_Arry[23];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-			
-			 R828_Arry[1]  = (R828_Arry[1] & 0xBF);   //0: PRE_DECT off
-			 R828_I2C.RegAddr  = 0x06;
-			 R828_I2C.Data     = R828_Arry[1];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-
-             //agc clk 250hz
-			 R828_Arry[21]  = (R828_Arry[21] & 0xCF) | 0x30;   //250hz
-			 R828_I2C.RegAddr  = 0x1A;
-			 R828_I2C.Data     = R828_Arry[21];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
-
 			 R828_Delay_MS(pTuner, 250);
 			 
 			 // PRE_DECT on
 			 /*
-			 R828_Arry[1]  = (R828_Arry[1] & 0xBF) | SysFreq_Info1.PRE_DECT;
-			 R828_I2C.RegAddr  = 0x06;
-			 R828_I2C.Data     = R828_Arry[1];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;			 
+			R828_WriteHelper(0x06, 1, 0xBF, SysFreq_Info1.PRE_DECT);
+			I2C_WRITE_CHECK;
              */
 			 // write LNA TOP = 3
-			 //R828_Arry[24] = (R828_Arry[24] & 0xC7) | (SysFreq_Info1.LNA_TOP & 0x38);
-			 R828_Arry[24] = (R828_Arry[24] & 0xC7) | 0x18;  //TOP=3
-			 R828_I2C.RegAddr = 0x1D;
-			 R828_I2C.Data = R828_Arry[24];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				 return RT_Fail;
+			//R828_WriteHelper(0x1D, 24, 0xC7, SysFreq_Info1.LNA_TOP & 0x38);
+			R828_WriteHelper(0x1D, 24, 0xC7, 0x18);
+			I2C_WRITE_CHECK;
 
 			 // write discharge mode
-			 R828_Arry[23] = (R828_Arry[23] & 0xFB) | (SysFreq_Info1.MIXER_TOP & 0x04);
-			 R828_I2C.RegAddr = 0x1C;
-			 R828_I2C.Data = R828_Arry[23];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1C, 23, 0xFB, SysFreq_Info1.MIXER_TOP & 0x04);
+			I2C_WRITE_CHECK;
 
 			 // LNA discharge current
-			 R828_Arry[25]  = (R828_Arry[25] & 0xE0) | SysFreq_Info1.LNA_DISCHARGE;
-			 R828_I2C.RegAddr  = 0x1E;
-			 R828_I2C.Data     = R828_Arry[25];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1E, 25, 0xE0, SysFreq_Info1.LNA_DISCHARGE);
+			I2C_WRITE_CHECK;
 
 			 //agc clk 60hz 
-			 R828_Arry[21]  = (R828_Arry[21] & 0xCF) | 0x20;
-			 R828_I2C.RegAddr  = 0x1A;
-			 R828_I2C.Data     = R828_Arry[21];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1A, 21, 0xCF, 0x20);
+			I2C_WRITE_CHECK;
 		 }
 	 }
 	 else 
@@ -2789,52 +2413,31 @@ R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFr
 		 {
 			 /*
              // PRE_DECT on
-			 R828_Arry[1]  = (R828_Arry[1] & 0xBF) | SysFreq_Info1.PRE_DECT;
-			 R828_I2C.RegAddr  = 0x06;
-			 R828_I2C.Data     = R828_Arry[1];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x06, 1, 0xBF, SysFreq_Info1.PRE_DECT);
+			I2C_WRITE_CHECK;
              */
 			  // PRE_DECT off
-			 R828_Arry[1]  = (R828_Arry[1] & 0xBF);   //0: PRE_DECT off
-			 R828_I2C.RegAddr  = 0x06;
-			 R828_I2C.Data     = R828_Arry[1];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x06, 1, 0xBF, 0x00);  // 0: PRE_DECT off
+			I2C_WRITE_CHECK;
 
 			 // write LNA TOP
-			 R828_Arry[24] = (R828_Arry[24] & 0xC7) | (SysFreq_Info1.LNA_TOP & 0x38);
-			 R828_I2C.RegAddr = 0x1D;
-			 R828_I2C.Data = R828_Arry[24];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				 return RT_Fail;
+			R828_WriteHelper(0x1D, 24, 0xC7, SysFreq_Info1.LNA_TOP & 0x38);
+			I2C_WRITE_CHECK;
 
 			 // write discharge mode
-			 R828_Arry[23] = (R828_Arry[23] & 0xFB) | (SysFreq_Info1.MIXER_TOP & 0x04); 
-			 R828_I2C.RegAddr = 0x1C;
-			 R828_I2C.Data = R828_Arry[23];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1C, 23, 0xFB, SysFreq_Info1.MIXER_TOP & 0x04);
+			I2C_WRITE_CHECK;
 
 			 // LNA discharge current
-			 R828_Arry[25]  = (R828_Arry[25] & 0xE0) | SysFreq_Info1.LNA_DISCHARGE;  
-			 R828_I2C.RegAddr  = 0x1E;
-			 R828_I2C.Data     = R828_Arry[25];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1E, 25, 0xE0, SysFreq_Info1.LNA_DISCHARGE);
+			I2C_WRITE_CHECK;
 
 			 // agc clk 1Khz, external det1 cap 1u
-			 R828_Arry[21]  = (R828_Arry[21] & 0xCF) | 0x00;   			
-			 R828_I2C.RegAddr  = 0x1A;
-			 R828_I2C.Data     = R828_Arry[21];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x1A, 21, 0xCF, 0x00);
+			I2C_WRITE_CHECK;
 
-			 R828_Arry[11]  = (R828_Arry[11] & 0xFB) | 0x00;   			
-			 R828_I2C.RegAddr  = 0x10;
-			 R828_I2C.Data     = R828_Arry[11];
-			 if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-				return RT_Fail;
+			R828_WriteHelper(0x10, 11, 0xFB, 0x00);
+			I2C_WRITE_CHECK;
 		 }
 	 }
 
@@ -2842,80 +2445,48 @@ R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFr
 
 }
 
+static const UINT8 r820t_standby_regs[][2]  = {
+	{0x06, 0xB1},  /* LOOP_THROUGH */
+	{0x05, 0x03},
+	{0x00, 0x00},
+	{0x05, 0xA3},  /* !LOOP_THROUGH */
+	{0x06, 0xB1},
+	{0x00, 0x00},
+	{0x07, 0x3A},  /* begin common settings */
+	{0x08, 0x40},
+	{0x09, 0xC0},  /* polyfilter off */
+	{0x0A, 0x36},
+	{0x0C, 0x35},
+	{0x0F, 0x68},  /* was 0x78, which turns off CLK_Out */
+	{0x11, 0x03},
+	{0x17, 0xF4},
+	{0x19, 0x0C},
+	{0x00, 0x00},
+};
+
 R828_ErrCode R828_Standby(void *pTuner, R828_LoopThrough_Type R828_LoopSwitch)
 {
-	if(R828_LoopSwitch == LOOP_THROUGH)
-	{
-		R828_I2C.RegAddr = 0x06;
-		R828_I2C.Data    = 0xB1;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
-		R828_I2C.RegAddr = 0x05;
-		R828_I2C.Data = 0x03;
+	int i = 0;
+	if(R828_LoopSwitch == LOOP_THROUGH) {
+		i = 0;}
+	else {
+		i = 3;}
 
-
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-	}
-	else
-	{
-		R828_I2C.RegAddr = 0x05;
-		R828_I2C.Data    = 0xA3;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
-
-		R828_I2C.RegAddr = 0x06;
-		R828_I2C.Data    = 0xB1;
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+	while (r820t_standby_regs[i][0]) {
+		R828_I2C.RegAddr = r820t_standby_regs[i][0];
+		R828_I2C.Data    = r820t_standby_regs[i][1];
+		I2C_WRITE_CHECK;
+		i++;
 	}
 
-	R828_I2C.RegAddr = 0x07;
-	R828_I2C.Data    = 0x3A;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	i = 6;
+	while (r820t_standby_regs[i][0]) {
+		R828_I2C.RegAddr = r820t_standby_regs[i][0];
+		R828_I2C.Data    = r820t_standby_regs[i][1];
+		I2C_WRITE_CHECK;
+		i++;
+	}
 
-	R828_I2C.RegAddr = 0x08;
-	R828_I2C.Data    = 0x40;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x09;
-	R828_I2C.Data    = 0xC0;   //polyfilter off
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x0A;
-	R828_I2C.Data    = 0x36;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x0C;
-	R828_I2C.Data    = 0x35;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x0F;
-	R828_I2C.Data    = 0x68; /* was 0x78, which turns off CLK_Out */
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x11;
-	R828_I2C.Data    = 0x03;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x17;
-	R828_I2C.Data    = 0xF4;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	R828_I2C.RegAddr = 0x19;
-	R828_I2C.Data    = 0x0C;
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
-
-	
 	return RT_Success;
 }
 
@@ -2971,18 +2542,12 @@ R828_ErrCode R828_SetRfGain(void *pTuner, int gain)
 	}
 
 	/* set LNA gain */
-	R828_I2C.RegAddr = 0x05;
-	R828_Arry[0] = (R828_Arry[0] & 0xF0) | lna_index;
-	R828_I2C.Data = R828_Arry[0];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x05, 0, 0xF0, lna_index);
+	I2C_WRITE_CHECK;
 
 	/* set Mixer gain */
-	R828_I2C.RegAddr = 0x07;
-	R828_Arry[2] = (R828_Arry[2] & 0xF0) | mix_index;
-	R828_I2C.Data = R828_Arry[2];
-	if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		return RT_Fail;
+	R828_WriteHelper(0x07, 2, 0xF0, mix_index);
+	I2C_WRITE_CHECK;
 
 	return RT_Success;
 }
@@ -2997,18 +2562,12 @@ R828_ErrCode R828_RfGainMode(void *pTuner, int manual)
 
 	if (manual) {
 		//LNA auto off
-	     R828_I2C.RegAddr = 0x05;
-	     R828_Arry[0] = R828_Arry[0] | 0x10;
-		 R828_I2C.Data = R828_Arry[0];
-	     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		       return RT_Fail;
+		R828_WriteHelper(0x05, 0, 0xFF, 0x10);
+		I2C_WRITE_CHECK;
 
 		 //Mixer auto off
-	     R828_I2C.RegAddr = 0x07;
-	     R828_Arry[2] = R828_Arry[2] & 0xEF;
-		 R828_I2C.Data = R828_Arry[2];
-	     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		       return RT_Fail;
+		R828_WriteHelper(0x07, 2, 0xEF, 0x00);
+		I2C_WRITE_CHECK;
 
 		R828_I2C_Len.RegAddr = 0x00;
 		R828_I2C_Len.Len     = 4; 
@@ -3016,35 +2575,25 @@ R828_ErrCode R828_RfGainMode(void *pTuner, int manual)
 			return RT_Fail;
 
 		/* set fixed VGA gain for now (16.3 dB) */
-		R828_I2C.RegAddr = 0x0C;
-		R828_Arry[7]    = (R828_Arry[7] & 0x60) | 0x08;
-		R828_I2C.Data    = R828_Arry[7];
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		R828_WriteHelper(0x0C, 7, 0x60, 0x08);
+		I2C_WRITE_CHECK;
 
 
 	} else {
 	    //LNA
-	     R828_I2C.RegAddr = 0x05;
-	     R828_Arry[0] = R828_Arry[0] & 0xEF;
-		 R828_I2C.Data = R828_Arry[0];
-	     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		       return RT_Fail;
+		R828_WriteHelper(0x05, 0, 0xEF, 0x00);
+		I2C_WRITE_CHECK;
 
 		 //Mixer
-	     R828_I2C.RegAddr = 0x07;
-	     R828_Arry[2] = R828_Arry[2] | 0x10;
-		 R828_I2C.Data = R828_Arry[2];
-	     if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-		       return RT_Fail;
+		R828_WriteHelper(0x07, 2, 0xFF, 0x10);
+		I2C_WRITE_CHECK;
 
 		/* set fixed VGA gain for now (26.5 dB) */
-		R828_I2C.RegAddr = 0x0C;
-		R828_Arry[7]    = (R828_Arry[7] & 0x60) | 0x0B;
-		R828_I2C.Data    = R828_Arry[7];
-		if(I2C_Write(pTuner, &R828_I2C) != RT_Success)
-			return RT_Fail;
+		R828_WriteHelper(0x0C, 7, 0x60, 0x0B);
+		I2C_WRITE_CHECK;
 	}
 
     return RT_Success;
 }
+
+// vim: tabstop=8:softtabstop=8:shiftwidth=8:noexpandtab
