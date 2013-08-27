@@ -34,6 +34,10 @@
  *	general astronomy usefulness
  *	multiple dongles
  *	multiple FFT workers
+ *	fft bins smaller than 61Hz
+ *	bandwidths smaller than 1MHz
+ *	overlapping hops
+ *	pre-fft window function (rectangular, hamming, blackman, blackman-harris, hann-poisson, youssef, kaiser, bartlett)
  */
 
 #include <errno.h>
@@ -98,7 +102,7 @@ struct tuning_state
 /* 1500 is enough for 3GHz b/w */
 #define MAX_TUNES	3000
 struct tuning_state tunes[MAX_TUNES];
-int tune_count;
+int tune_count = 0;
 
 void usage(void)
 {
@@ -106,7 +110,8 @@ void usage(void)
 		"rtl_power, a simple FFT logger for RTL2832 based DVB-T receivers\n\n"
 		"Use:\trtl_power -f freq_range [-options] [filename]\n"
 		"\t-f lower:upper:bin_size [Hz]\n"
-		"\t (bin size is a maximum, smaller more convenient bins will be used)\n"
+		"\t (bin size is a maximum, smaller more convenient bins\n"
+		"\t  will be used.  valid range 61-2M)\n"
 		"\t[-i integration_interval (default: 10 seconds)]\n"
 		"\t (buggy if a full sweep takes longer than the interval)\n"
 		"\t[-1 enables single-shot mode (default: off)]\n"
@@ -118,15 +123,18 @@ void usage(void)
 		"\t[-p ppm_error (default: 0)]\n"
 		"\tfilename (a '-' dumps samples to stdout)\n"
 		"\t (omitting the filename also uses stdout)\n\n"
-		"CSV FFT power output columns\n"
+		"CSV FFT output columns\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
 		"Examples:\n"
-		"\trtl_power -f 850M:900M:10k log.csv\n"
-		"\t (creates +5000 bins between 850MHz and 900MHz)\n"
-		"\trtl_power -f ... -i 2h -1 log.csv\n"
-		"\t (integrate for 2 hours and exit afterwards)\n"
-		"\ttimeout 1h rtl_power ....\n"
-		"\t (terminal rtl_power after running for 1 hour)\n"
+		"\trtl_power -f 88M:108M:125k fm_stations.csv\n"
+		"\t (creates 160 bins across the FM band,\n"
+		"\t  individual stations should be visible)\n"
+		"\trtl_power -f 100M:1G:1M -i 5m -1 survey.csv\n"
+		"\t (a five minute low res scan of nearly everything)\n"
+		"\trtl_power -f ... -i 15m -1 log.csv\n"
+		"\t (integrate for 15 minutes and exit afterwards)\n"
+		"\trtl_power -f ... -e 1h | gzip | log.csv.gz\n"
+		"\t (collect data for one hour and compress it on the fly)\n"
 		"");
 	exit(1);
 }
@@ -549,6 +557,9 @@ int main(int argc, char **argv)
 			break;
 		}
 	}
+
+	if (tune_count == 0) {
+		usage();}
 
 	if (argc <= optind) {
 		filename = "-";
