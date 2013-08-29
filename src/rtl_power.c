@@ -70,6 +70,7 @@
 #define MAXIMUM_OVERSAMPLE		16
 #define MAXIMUM_BUF_LENGTH		(MAXIMUM_OVERSAMPLE * DEFAULT_BUF_LENGTH)
 #define AUTO_GAIN			-100
+#define BUFFER_DUMP			4096
 
 static volatile int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
@@ -411,11 +412,15 @@ void frequency_range(char *arg)
 
 void retune(rtlsdr_dev_t *d, int freq, int rate)
 {
+	uint8_t dump[BUFFER_DUMP];
+	int n_read;
 	rtlsdr_set_center_freq(d, (uint32_t)freq);
 	//rtlsdr_set_sample_rate(d, (uint32_t)rate);
 	/* wait for settling and flush buffer */
 	usleep(5000);
-	rtlsdr_read_sync(d, NULL, 4096, NULL);
+	rtlsdr_read_sync(d, &dump, BUFFER_DUMP, &n_read);
+	if (n_read != BUFFER_DUMP) {
+		fprintf(stderr, "Error: bad retune.\n");}
 }
 
 void scanner(void)
