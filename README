@@ -4,3 +4,12 @@ turns your Realtek RTL2832 based DVB dongle into a SDR receiver
 
 For more information see:
 http://sdr.osmocom.org/trac/wiki/rtl-sdr
+
+Pre-built windows binaries:
+http://kmkeen.com/tmp/rtl-sdr-mingw32-2013-09-04.zip
+http://kmkeen.com/tmp/mingw32.sh.txt
+
+Script for rtl_power rendering:
+http://kmkeen.com/tmp/heatmap.py.txt
+
+
