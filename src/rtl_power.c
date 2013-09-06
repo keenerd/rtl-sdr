@@ -121,8 +121,8 @@ void usage(void)
 		//"\t[-s avg/iir smoothing (default: avg)]\n"
 		//"\t[-t threads (default: 1)]\n"
 		"\t[-w window (default: rectangle)]\n"
-		"\t (hamming, blackman, blackman_harris, hann_poisson, bartlett)\n"
-		// youssef, kaiser
+		"\t (hamming, blackman, blackman_harris, hann_poisson, bartlett, youssef)\n"
+		// kaiser
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-g tuner_gain (default: automatic)]\n"
 		"\t[-p ppm_error (default: 0)]\n"
@@ -304,9 +304,18 @@ double hann_poisson(int i, int length)
 }
 
 double youssef(int i, int length)
-// todo, find what on earth he was talking about
+/* really a blackman-harris-poisson window, but that is a mouthful */
 {
-	return 1.0;
+	double a, a0, a1, a2, a3, w, N1;
+	a0 = 0.35875;
+	a1 = 0.48829;
+	a2 = 0.14128;
+	a3 = 0.01168;
+	N1 = (double)(length-1);
+	w = a0 - a1*cos(2*i*M_PI/N1) + a2*cos(4*i*M_PI/N1) - a3*cos(6*i*M_PI/N1);
+	a = 0.0025;
+	w *= pow(M_E, (-a*(double)abs((int)(N1-1-2*i)))/N1);
+	return w;
 }
 
 double kaiser(int i, int length)
