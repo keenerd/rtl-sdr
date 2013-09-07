@@ -37,7 +37,7 @@
  *	fft bins smaller than 61Hz
  *	bandwidths smaller than 1MHz
  *	overlapping hops
- *	edge cropping
+ *	check edge cropping for off-by-one and rounding errors
  */
 
 #include <errno.h>
@@ -120,15 +120,21 @@ void usage(void)
 		"\t[-e exit_timer (default: off/0)]\n"
 		//"\t[-s avg/iir smoothing (default: avg)]\n"
 		//"\t[-t threads (default: 1)]\n"
-		"\t[-w window (default: rectangle)]\n"
-		"\t (hamming, blackman, blackman_harris, hann_poisson, bartlett, youssef)\n"
-		// kaiser
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-g tuner_gain (default: automatic)]\n"
 		"\t[-p ppm_error (default: 0)]\n"
 		"\tfilename (a '-' dumps samples to stdout)\n"
-		"\t (omitting the filename also uses stdout)\n\n"
-		"CSV FFT output columns\n"
+		"\t (omitting the filename also uses stdout)\n"
+		"\n"
+		"Experimental options:\n"
+		"\t[-w window (default: rectangle)]\n"
+		"\t (hamming, blackman, blackman-harris, hann-poisson, bartlett, youssef)\n"
+		// kaiser
+		"\t[-c crop_percent (default: 0%, recommended: 20%%-50%%)]\n"
+		"\t (discards data at the edges, 100%% discards everything)\n"
+		"\t (has no effect in rms bin mode)\n"
+		"\n"
+		"CSV FFT output columns:\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
 		"Examples:\n"
 		"\trtl_power -f 88M:108M:125k fm_stations.csv\n"
@@ -416,12 +422,32 @@ double atoft(char *f)
 	return atof(f);
 }
 
-void frequency_range(char *arg)
+double atofp(char *f)
+/* percent suffixes */
+{
+	char last;
+	int len;
+	double suff = 1.0;
+	len = strlen(f);
+	last = f[len-1];
+	f[len-1] = '\0';
+	switch (last) {
+		case '%':
+			suff *= 0.01;
+			suff *= atof(f);
+			f[len-1] = last;
+			return suff;
+	}
+	f[len-1] = last;
+	return atof(f);
+}
+
+void frequency_range(char *arg, double crop)
 /* flesh out the tunes[] for scanning */
 // do we want the fewest ranges (easy) or the fewest bins (harder)?
 {
 	char *start, *stop, *step;
-	int i, j, upper, lower, max_size, bw, bin_size, bin_e, buf_len;
+	int i, j, upper, lower, max_size, bw_seen, bw_used, bin_size, bin_e, buf_len;
 	struct tuning_state *ts;
 	/* hacky string parsing */
 	start = arg;
@@ -436,8 +462,9 @@ void frequency_range(char *arg)
 	step[-1] = ':';
 	/* evenly sized ranges, as close to 2MHz as possible */
 	for (i=1; i<1500; i++) {
-		bw = (upper - lower) / i;
-		if (bw > 2000000) {
+		bw_seen = (upper - lower) / i;
+		bw_used = (int)((double)(bw_seen) / (1.0 - crop));
+		if (bw_used > 2000000) {
 			continue;}
 		tune_count = i;
 		break;
@@ -445,14 +472,15 @@ void frequency_range(char *arg)
 	/* number of bins is power-of-two, bin size is under limit */
 	for (i=1; i<=21; i++) {
 		bin_e = i;
-		bin_size = bw / (1<<i);
+		bin_size = bw_used / (1<<i);
 		if (bin_size <= max_size) {
 			break;}
 	}
 	/* unless giant bins */
 	if (max_size >= 1000000) {
-		bw = max_size;
-		tune_count = (upper - lower) / bw;
+		bw_seen = max_size;
+		bw_used = max_size;
+		tune_count = (upper - lower) / bw_seen;
 		bin_e = 0;
 	}
 	if (tune_count > MAX_TUNES) {
@@ -466,8 +494,8 @@ void frequency_range(char *arg)
 	/* build the array */
 	for (i=0; i<tune_count; i++) {
 		ts = &tunes[i];
-		ts->freq = lower + i*bw + bw/2;
-		ts->rate = bw;
+		ts->freq = lower + i*bw_seen + bw_seen/2;
+		ts->rate = bw_used;
 		ts->bin_e = bin_e;
 		ts->samples = 0;
 		ts->mega_samples = 0L;
@@ -488,10 +516,12 @@ void frequency_range(char *arg)
 	}
 	/* report */
 	fprintf(stderr, "Number of frequency hops: %i\n", tune_count);
-	fprintf(stderr, "Dongle bandwidth: %iHz\n", bw);
+	fprintf(stderr, "Dongle bandwidth: %iHz\n", bw_used);
 	fprintf(stderr, "Total FFT bins: %i\n", tune_count * (1<<bin_e));
+	fprintf(stderr, "Logged FFT bins: %i\n", \
+	  (int)((double)(tune_count * (1<<bin_e)) * (1.0-crop)));
 	fprintf(stderr, "FFT bin size: %iHz\n", bin_size);
-	fprintf(stderr, "Buffer size: %0.2fms\n", 1000 * 0.5 * (float)buf_len / (float)bw);
+	fprintf(stderr, "Buffer size: %0.2fms\n", 1000 * 0.5 * (float)buf_len / (float)bw_used);
 }
 
 void retune(rtlsdr_dev_t *d, int freq)
@@ -547,9 +577,9 @@ void scanner(void)
 	}
 }
 
-void csv_dbm(struct tuning_state *ts)
+void csv_dbm(struct tuning_state *ts, double crop)
 {
-	int i, len;
+	int i, len, i1, i2, bw2;
 	long tmp;
 	double dbm;
 	len = 1 << ts->bin_e;
@@ -565,17 +595,20 @@ void csv_dbm(struct tuning_state *ts)
 		}
 	}
 	/* Hz low, Hz high, Hz step, samples, dbm, dbm, ... */
-	fprintf(file, "%i, %i, %i, %i, ", ts->freq - ts->rate/2,
-		ts->freq + ts->rate/2, ts->rate / len, ts->samples);
+	bw2 = (int)((double)ts->rate * (1.0-crop) * 0.5);
+	fprintf(file, "%i, %i, %.2f, %i, ", ts->freq - bw2, ts->freq + bw2,
+		(double)ts->rate / (double)len, ts->samples);
 	// something seems off with the dbm math
-	for (i=0; i<(len-1); i++) {
+	i1 = 0 + (int)((double)len * crop * 0.5);
+	i2 = (len-1) - (int)((double)len * crop * 0.5);
+	for (i=i1; i<i2; i++) {
 		dbm  = (double)ts->avg[i];
 		dbm /= (double)ts->rate;
 		dbm /= (double)ts->samples;
 		dbm  = 10 * log10(dbm);
 		fprintf(file, "%.2f, ", dbm);
 	}
-	dbm = (double)ts->avg[len-1] / ((double)ts->rate * (double)ts->samples);
+	dbm = (double)ts->avg[i2] / ((double)ts->rate * (double)ts->samples);
 	if (ts->bin_e == 0) {
 		dbm = ((double)ts->avg[0] / \
 		((double)ts->rate * (double)ts->samples));}
@@ -604,7 +637,9 @@ int main(int argc, char **argv)
 	int fft_threads = 1;
 	int smoothing = 0;
 	int single = 0;
+	double crop = 0.1;
 	char vendor[256], product[256], serial[256];
+	char *freq_optarg;
 	time_t next_tick;
 	time_t time_now;
 	time_t exit_time = 0;
@@ -612,16 +647,19 @@ int main(int argc, char **argv)
 	struct tm *cal_time;
 	double (*window_fn)(int, int) = rectangle;
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:1h")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:1h")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
-			frequency_range(optarg);
+			freq_optarg = strdup(optarg);
 			break;
 		case 'd':
 			dev_index = atoi(optarg);
 			break;
 		case 'g':
 			gain = (int)(atof(optarg) * 10);
+			break;
+		case 'c':
+			crop = atofp(optarg);
 			break;
 		case 'i':
 			interval = (int)round(atoft(optarg));
@@ -642,9 +680,9 @@ int main(int argc, char **argv)
 				window_fn = hamming;}
 			if (strcmp("blackman",  optarg) == 0) {
 				window_fn = blackman;}
-			if (strcmp("blackman_harris",  optarg) == 0) {
+			if (strcmp("blackman-harris",  optarg) == 0) {
 				window_fn = blackman_harris;}
-			if (strcmp("hann_poisson",  optarg) == 0) {
+			if (strcmp("hann-poisson",  optarg) == 0) {
 				window_fn = hann_poisson;}
 			if (strcmp("youssef",  optarg) == 0) {
 				window_fn = youssef;}
@@ -668,6 +706,8 @@ int main(int argc, char **argv)
 			break;
 		}
 	}
+
+	frequency_range(freq_optarg, crop);
 
 	if (tune_count == 0) {
 		usage();}
@@ -772,7 +812,7 @@ int main(int argc, char **argv)
 		strftime(t_str, 50, "%Y-%m-%d, %H:%M:%S", cal_time);
 		for (i=0; i<tune_count; i++) {
 			fprintf(file, "%s, ", t_str);
-			csv_dbm(&tunes[i]);
+			csv_dbm(&tunes[i], crop);
 		}
 		fflush(file);
 		while (time(NULL) >= next_tick) {
