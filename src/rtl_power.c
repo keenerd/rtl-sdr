@@ -442,6 +442,28 @@ double atofp(char *f)
 	return atof(f);
 }
 
+int nearest_gain(int target_gain)
+{
+	int i, err1, err2, count, close_gain;
+	int* gains;
+	count = rtlsdr_get_tuner_gains(dev, NULL);
+	if (count <= 0) {
+		return 0;
+	}
+	gains = malloc(sizeof(int) * count);
+	count = rtlsdr_get_tuner_gains(dev, gains);
+	close_gain = gains[0];
+	for (i=0; i<count; i++) {
+		err1 = abs(target_gain - close_gain);
+		err2 = abs(target_gain - gains[i]);
+		if (err2 < err1) {
+			close_gain = gains[i];
+		}
+	}
+	free(gains);
+	return close_gain;
+}
+
 void frequency_range(char *arg, double crop)
 /* flesh out the tunes[] for scanning */
 // do we want the fewest ranges (easy) or the fewest bins (harder)?
@@ -761,6 +783,7 @@ int main(int argc, char **argv)
 		r = rtlsdr_set_tuner_gain_mode(dev, 0);
 	} else {
 		r = rtlsdr_set_tuner_gain_mode(dev, 1);
+		gain = nearest_gain(gain);
 		r = rtlsdr_set_tuner_gain(dev, gain);
 	}
 	if (r != 0) {
