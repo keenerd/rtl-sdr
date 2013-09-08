@@ -182,6 +182,12 @@ r820t_SetRfFreqHz(
 	);
 
 int
+r820t_SetRfFreqHz_fast(
+	void *pTuner,
+	unsigned long RfFreqHz
+	);
+
+int
 r820t_SetStandardMode(
 	void *pTuner,
 	int StandardMode

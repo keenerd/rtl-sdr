@@ -341,12 +341,15 @@ static Freq_Info_Type Freq_Info1;
 //                   Internal Functions                     //
 //----------------------------------------------------------//
 void R828_WriteHelper(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB);
+int  R828_WriteHelper_fast(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB);
 R828_ErrCode R828_Xtal_Check(void *pTuner);
 R828_ErrCode R828_InitReg(void *pTuner);
 R828_ErrCode R828_IMR_Prepare(void *pTuner);
 R828_ErrCode R828_IMR(void *pTuner, UINT8 IMR_MEM, int IM_Flag);
 R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Standard);
+R828_ErrCode R828_PLL_fast(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Standard);
 R828_ErrCode R828_MUX(void *pTuner, UINT32 RF_KHz);
+R828_ErrCode R828_MUX_fast(void *pTuner, UINT32 RF_KHz);
 R828_ErrCode R828_IQ(void *pTuner, R828_SectType* IQ_Pont);
 R828_ErrCode R828_IQ_Tree(void *pTuner, UINT8 FixPot, UINT8 FlucPot, UINT8 PotReg, R828_SectType* CompareTree);
 R828_ErrCode R828_CompreCor(R828_SectType* CorArry);
@@ -370,6 +373,19 @@ void R828_WriteHelper(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB)
 	R828_I2C.RegAddr = RegAddr;
 	R828_Arry[ArryI] = (R828_Arry[ArryI] & AndB) | OrB;
 	R828_I2C.Data    = R828_Arry[ArryI];
+}
+
+/* true if write must actually be done */
+int R828_WriteHelper_fast(UINT8 RegAddr, int ArryI, UINT8 AndB, UINT8 OrB)
+{
+	UINT8 r;
+	R828_I2C.RegAddr = RegAddr;
+	r = (R828_Arry[ArryI] & AndB) | OrB;
+	if (r == R828_Arry[ArryI]) {
+		return 0;}
+	R828_Arry[ArryI] = r;
+	R828_I2C.Data    = r;
+	return 1;
 }
 
 #define I2C_WRITE_CHECK if(I2C_Write(pTuner, &R828_I2C) != RT_Success) {return RT_Fail;}
@@ -1247,23 +1263,17 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	}
 #endif
 	//FIXME hack
-	R828_Arry[11] &= 0xEF;
 	PLL_Ref = rtlsdr_get_tuner_clock(pTuner);
 
-	R828_I2C.RegAddr = 0x10;
-	R828_I2C.Data = R828_Arry[11];
+	R828_WriteHelper(0x10, 11, 0xEF, 0x00);
 	I2C_WRITE_CHECK;
 
 	//set pll autotune = 128kHz
-	R828_I2C.RegAddr = 0x1A;
-	R828_Arry[21]    = R828_Arry[21] & 0xF3;
-	R828_I2C.Data    = R828_Arry[21];
+	R828_WriteHelper(0x1A, 21, 0xF3, 0x00);
 	I2C_WRITE_CHECK;
 
 	//Set VCO current = 100
-	R828_I2C.RegAddr = 0x12;
-	R828_Arry[13]    = (R828_Arry[13] & 0x1F) | 0x80; 
-	R828_I2C.Data    = R828_Arry[13];
+	R828_WriteHelper(0x12, 13, 0x1F, 0x80);
 	I2C_WRITE_CHECK;
 
 	//Divider
@@ -1397,6 +1407,162 @@ R828_ErrCode R828_PLL(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Stan
 	return RT_Success;
 }
 
+R828_ErrCode R828_PLL_fast(void *pTuner, UINT32 LO_Freq, R828_Standard_Type R828_Standard)
+{
+	UINT8  MixDiv, DivBuf, Ni, Si, DivNum, Nint;
+	UINT32 VCO_Min_kHz, VCO_Max_kHz;
+	uint64_t VCO_Freq;
+	UINT32 PLL_Ref;		// Max 24000 (kHz)
+	UINT32 VCO_Fra;		// VCO contribution by SDM (kHz)
+	UINT16 Nsdm, SDM, SDM16to9, SDM8to1;
+	UINT8  VCO_fine_tune;
+	int i;
+
+	MixDiv   = 2;
+	DivBuf = Ni = Si = DivNum = Nint = 0;
+	VCO_Min_kHz  = 1770000;
+	VCO_Max_kHz  = VCO_Min_kHz*2;
+	VCO_Freq = 0;
+	PLL_Ref	= 0;		// Max 24000 (kHz)
+	VCO_Fra	= 0;		// VCO contribution by SDM (kHz)
+	Nsdm = 2;
+	SDM = SDM16to9 = SDM8to1 = 0;
+	VCO_fine_tune = 0;
+
+	// FIXME hack
+	PLL_Ref = rtlsdr_get_tuner_clock(pTuner);
+
+	if (R828_WriteHelper_fast(0x10, 11, 0xEF, 0x00))
+		{I2C_WRITE_CHECK;}
+
+	// set pll autotune = 128kHz
+	if (R828_WriteHelper_fast(0x1A, 21, 0xF3, 0x00))
+		{I2C_WRITE_CHECK;}
+
+	// Set VCO current = 100
+	if (R828_WriteHelper_fast(0x12, 13, 0x1F, 0x80))
+		{I2C_WRITE_CHECK;}
+
+	// Divider
+	while(MixDiv <= 64)
+	{
+		if((((LO_Freq/1000) * MixDiv) >= VCO_Min_kHz) && (((LO_Freq/1000) * MixDiv) < VCO_Max_kHz))
+		{
+			DivBuf = MixDiv;
+			while(DivBuf > 2)
+			{
+				DivBuf = DivBuf >> 1;
+				DivNum ++;
+			}
+			break;
+		}
+		MixDiv = MixDiv << 1;
+	}
+
+	R828_I2C_Len.RegAddr = 0x00;
+	R828_I2C_Len.Len     = 5;
+	if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
+		{return RT_Fail;}
+
+	VCO_fine_tune = (R828_I2C_Len.Data[4] & 0x30)>>4;
+
+	if(VCO_fine_tune > VCO_pwr_ref) {
+		DivNum = DivNum - 1;
+	} else if(VCO_fine_tune < VCO_pwr_ref) {
+		DivNum = DivNum + 1;
+	}
+
+	if (R828_WriteHelper_fast(0x10, 11, 0x1F, DivNum << 5))
+		{I2C_WRITE_CHECK;}
+
+	VCO_Freq = (uint64_t)(LO_Freq * (uint64_t)MixDiv);
+	Nint     = (UINT8) (VCO_Freq / 2 / PLL_Ref);
+	VCO_Fra  = (UINT16) ((VCO_Freq - 2 * PLL_Ref * Nint) / 1000);
+
+	// FIXME hack
+	PLL_Ref /= 1000;
+
+	// boundary spur prevention
+	if (VCO_Fra < PLL_Ref/64)           // 2*PLL_Ref/128
+		VCO_Fra = 0;
+	else if (VCO_Fra > PLL_Ref*127/64)  // 2*PLL_Ref*127/128
+	{
+		VCO_Fra = 0;
+		Nint ++;
+	}
+	else if((VCO_Fra > PLL_Ref*127/128) && (VCO_Fra < PLL_Ref)) // > 2*PLL_Ref*127/256,  < 2*PLL_Ref*128/256
+		VCO_Fra = PLL_Ref*127/128;      // VCO_Fra = 2*PLL_Ref*127/256
+	else if((VCO_Fra > PLL_Ref) && (VCO_Fra < PLL_Ref*129/128)) // > 2*PLL_Ref*128/256,  < 2*PLL_Ref*129/256
+		VCO_Fra = PLL_Ref*129/128;      // VCO_Fra = 2*PLL_Ref*129/256
+	else
+		VCO_Fra = VCO_Fra;
+
+	if (Nint > 63) {
+		fprintf(stderr, "[R820T] No valid PLL values for %u Hz!\n", LO_Freq);
+		return RT_Fail;
+	}
+
+	// N & S
+	Ni       = (Nint - 13) / 4;
+	Si       = Nint - 4 *Ni - 13;
+	if (R828_WriteHelper_fast(0x14, 15, 0x00, Ni + (Si << 6)))
+		{I2C_WRITE_CHECK;}
+
+	// pw_sdm
+	if(VCO_Fra == 0) {
+		i = R828_WriteHelper_fast(0x12, 13, 0xF7, 0x08);
+	} else {
+		i = R828_WriteHelper_fast(0x12, 13, 0xF7, 0x00);
+	}
+	if (i)
+		{I2C_WRITE_CHECK;}
+
+	// SDM calculator
+	while(VCO_Fra > 1)
+	{
+		if (VCO_Fra > (2*PLL_Ref / Nsdm))
+		{
+			SDM = SDM + 32768 / (Nsdm/2);
+			VCO_Fra = VCO_Fra - 2*PLL_Ref / Nsdm;
+			if (Nsdm >= 0x8000)
+				{break;}
+		}
+		Nsdm = Nsdm << 1;
+	}
+
+	SDM16to9 = SDM >> 8;
+	SDM8to1 =  SDM - (SDM16to9 << 8);
+
+	if (R828_WriteHelper_fast(0x16, 17, 0x00, (UINT8) SDM16to9))
+		{I2C_WRITE_CHECK;}
+
+	if (R828_WriteHelper_fast(0x15, 16, 0x00, (UINT8) SDM8to1))
+		{I2C_WRITE_CHECK;}
+
+	// needs a delay here?
+
+	// check PLL lock status
+	R828_I2C_Len.RegAddr = 0x00;
+	R828_I2C_Len.Len     = 3;
+	if(I2C_Read_Len(pTuner, &R828_I2C_Len) != RT_Success)
+		return RT_Fail;
+
+	if( (R828_I2C_Len.Data[2] & 0x40) == 0x00 )
+	{
+		fprintf(stderr, "[R820T] PLL not locked for %u Hz!\n", LO_Freq);
+		R828_WriteHelper(0x12, 13, 0x1F, 0x60);  // increase VCO current
+		I2C_WRITE_CHECK;
+
+		return RT_Fail;
+	}
+
+	// set pll autotune = 8kHz
+	if (R828_WriteHelper_fast(0x1A, 21, 0xFF, 0x08))
+		{I2C_WRITE_CHECK;}
+
+	return RT_Success;
+}
+
 R828_ErrCode R828_MUX(void *pTuner, UINT32 RF_KHz)
 {	
 	UINT8 RT_Reg08;
@@ -1460,6 +1626,75 @@ R828_ErrCode R828_MUX(void *pTuner, UINT32 RF_KHz)
 
 	R828_WriteHelper(0x09, 4, 0xC0, RT_Reg09);
 	I2C_WRITE_CHECK;
+
+	return RT_Success;
+}
+
+R828_ErrCode R828_MUX_fast(void *pTuner, UINT32 RF_KHz)
+{
+	int i;
+	UINT8 RT_Reg08;
+	UINT8 RT_Reg09;
+
+	RT_Reg08   = 0;
+	RT_Reg09   = 0;
+
+	//Freq_Info_Type Freq_Info1;
+	Freq_Info1 = R828_Freq_Sel(RF_KHz);
+
+	// Open Drain
+	if (R828_WriteHelper_fast(0x17, 18, 0xF7, Freq_Info1.OPEN_D))
+		{I2C_WRITE_CHECK;}
+
+	// RF_MUX,Polymux
+	if (R828_WriteHelper_fast(0x1A, 21, 0x3C, Freq_Info1.RF_MUX_PLOY))
+	I2C_WRITE_CHECK;
+
+	// TF BAND
+	if (R828_WriteHelper_fast(0x1B, 22, 0x00, Freq_Info1.TF_C))
+		{I2C_WRITE_CHECK;}
+
+	// XTAL CAP & Drive
+	switch(Xtal_cap_sel)
+	{
+	   case XTAL_LOW_CAP_30P:
+	   case XTAL_LOW_CAP_20P:
+		i = R828_WriteHelper_fast(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP20P | 0x08);
+		   break;
+
+	   case XTAL_LOW_CAP_10P:
+		i = R828_WriteHelper_fast(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP10P | 0x08);
+		   break;
+
+	   case XTAL_LOW_CAP_0P:
+		i = R828_WriteHelper_fast(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x08);
+		   break;
+
+	   case XTAL_HIGH_CAP_0P:
+		i = R828_WriteHelper_fast(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x00);
+		   break;
+
+	   default:
+		i = R828_WriteHelper_fast(0x10, 11, 0xF4, Freq_Info1.XTAL_CAP0P | 0x08);
+		   break;
+	}
+	if (i)
+		{I2C_WRITE_CHECK}
+
+	//Set_IMR
+	RT_Reg08 = 0;
+	RT_Reg09 = 0;
+	if(R828_IMR_done_flag == TRUE)
+	{
+		RT_Reg08 = IMR_Data[Freq_Info1.IMR_MEM].Gain_X & 0x3F;
+		RT_Reg09 = IMR_Data[Freq_Info1.IMR_MEM].Phase_Y & 0x3F;
+	}
+
+	if (R828_WriteHelper_fast(0x08, 3, 0xC0, RT_Reg08))
+		{I2C_WRITE_CHECK}
+
+	if (R828_WriteHelper_fast(0x09, 4, 0xC0, RT_Reg09))
+		{I2C_WRITE_CHECK}
 
 	return RT_Success;
 }
@@ -2443,6 +2678,133 @@ R828_ErrCode R828_SetFrequency(void *pTuner, R828_Set_Info R828_INFO, R828_SetFr
 
      return RT_Success;
 
+}
+
+R828_ErrCode R828_SetFrequency_fast(void *pTuner, R828_Set_Info R828_INFO, R828_SetFreq_Type R828_SetFreqMode)
+{
+	UINT32	LO_Hz;
+	R828_SetFreqMode = FAST_MODE;
+
+	if(R828_INFO.R828_Standard==SECAM_L1) {
+		LO_Hz = R828_INFO.RF_Hz - (Sys_Info1.IF_KHz * 1000);
+	} else {
+		LO_Hz = R828_INFO.RF_Hz + (Sys_Info1.IF_KHz * 1000);
+	}
+
+	// Set MUX dependent var. Must do before PLL( )
+	// todo, check for speed
+	if(R828_MUX_fast(pTuner, LO_Hz/1000) != RT_Success) {
+	        return RT_Fail;}
+
+	// Set PLL
+	// todo, check for speed
+	if(R828_PLL_fast(pTuner, LO_Hz, R828_INFO.R828_Standard) != RT_Success) {
+		return RT_Fail;}
+
+	R828_IMR_point_num = Freq_Info1.IMR_MEM;
+
+	// Set TOP,VTH,VTL
+	SysFreq_Info1 = R828_SysFreq_Sel(R828_INFO.R828_Standard, R828_INFO.RF_KHz);
+
+	// write DectBW, pre_dect_TOP
+	if (R828_WriteHelper_fast(0x1D, 24, 0x38, SysFreq_Info1.LNA_TOP & 0xC7))
+		{I2C_WRITE_CHECK;}
+
+	// write MIXER TOP, TOP+-1
+	if (R828_WriteHelper_fast(0x1C, 23, 0x07, SysFreq_Info1.MIXER_TOP & 0xF8))
+		{I2C_WRITE_CHECK;}
+
+
+	// write LNA VTHL
+	if (R828_WriteHelper_fast(0x0D, 8, 0x00, SysFreq_Info1.LNA_VTH_L))
+		{I2C_WRITE_CHECK;}
+
+	// write MIXER VTHL
+	if (R828_WriteHelper_fast(0x0E, 9, 0x00, SysFreq_Info1.MIXER_VTH_L))
+		{I2C_WRITE_CHECK;}
+
+	// Cable-1/Air in
+	if (R828_WriteHelper_fast(0x05, 0, 0x9F, SysFreq_Info1.AIR_CABLE1_IN))
+		{I2C_WRITE_CHECK;}
+
+	// Cable-2 in
+	if (R828_WriteHelper_fast(0x06, 1, 0xF7, SysFreq_Info1.CABLE2_IN))
+		{I2C_WRITE_CHECK;}
+
+	// CP current
+	if (R828_WriteHelper_fast(0x11, 12, 0xC7, SysFreq_Info1.CP_CUR))
+		{I2C_WRITE_CHECK;}
+
+	// div buffer current
+	if (R828_WriteHelper_fast(0x17, 18, 0xCF, SysFreq_Info1.DIV_BUF_CUR))
+		{I2C_WRITE_CHECK;}
+
+	// Set channel filter current
+	if (R828_WriteHelper_fast(0x0A, 5, 0x9F, SysFreq_Info1.FILTER_CUR))
+		{I2C_WRITE_CHECK;}
+
+	// Air-In only for Astrometa
+	if (R828_WriteHelper_fast(0x05, 0, 0x9F, 0x00))
+		{I2C_WRITE_CHECK;}
+
+	if (R828_WriteHelper_fast(0x06, 1, 0xF7, 0x00))
+		{I2C_WRITE_CHECK;}
+
+	// Set LNA
+	if(R828_INFO.R828_Standard > SECAM_L1)
+	{
+		// FAST or NORMAL mode
+		//R828_WriteHelper_fast(0x1D, 24, 0xC7, 0x20);  //LNA TOP:4
+		if (R828_WriteHelper_fast(0x1D, 24, 0xC7, 0x00))  //LNA TOP:lowest
+			{I2C_WRITE_CHECK;}
+
+		if (R828_WriteHelper_fast(0x1C, 23, 0xFB, 0x00))  // 0: normal mode
+			{I2C_WRITE_CHECK;}
+
+		if (R828_WriteHelper_fast(0x06, 1, 0xBF, 0x00))  //0: PRE_DECT off
+			{I2C_WRITE_CHECK;}
+
+		if (R828_WriteHelper_fast(0x1A, 21, 0xCF, 0x30))  // agc clk 250hz
+			{I2C_WRITE_CHECK;}
+	 } else {
+		// PRE_DECT off
+		if (R828_WriteHelper_fast(0x06, 1, 0xBF, 0x00))  // 0: PRE_DECT off
+			{I2C_WRITE_CHECK;}
+
+		// write LNA TOP
+		if (R828_WriteHelper_fast(0x1D, 24, 0xC7, SysFreq_Info1.LNA_TOP & 0x38))
+			{I2C_WRITE_CHECK;}
+
+		// write discharge mode
+		if (R828_WriteHelper_fast(0x1C, 23, 0xFB, SysFreq_Info1.MIXER_TOP & 0x04))
+			{I2C_WRITE_CHECK;}
+
+		// LNA discharge current
+		if (R828_WriteHelper_fast(0x1E, 25, 0xE0, SysFreq_Info1.LNA_DISCHARGE))
+			{I2C_WRITE_CHECK;}
+
+		// agc clk 1Khz, external det1 cap 1u
+		if (R828_WriteHelper_fast(0x1A, 21, 0xCF, 0x00))
+			{I2C_WRITE_CHECK;}
+
+		if (R828_WriteHelper_fast(0x10, 11, 0xFB, 0x00))
+			{I2C_WRITE_CHECK;}
+	}
+	return RT_Success;
+}
+
+int r820t_SetRfFreqHz_fast(void *pTuner, unsigned long RfFreqHz)
+{
+	R828_Set_Info R828Info;
+
+	R828Info.R828_Standard = (R828_Standard_Type)DVB_T_6M;
+	R828Info.RF_Hz = (UINT32)(RfFreqHz);
+	R828Info.RF_KHz = (UINT32)(RfFreqHz/1000);
+
+	if(R828_SetFrequency_fast(pTuner, R828Info, NORMAL_MODE) != RT_Success)
+		return FUNCTION_ERROR;
+
+	return FUNCTION_SUCCESS;
 }
 
 static const UINT8 r820t_standby_regs[][2]  = {

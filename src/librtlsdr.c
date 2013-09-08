@@ -184,7 +184,7 @@ int r820t_init(void *dev) {
 	return r;
 }
 int r820t_exit(void *dev) { return r820t_SetStandby(dev, 0); }
-int r820t_set_freq(void *dev, uint32_t freq) { return r820t_SetRfFreqHz(dev, freq); }
+int r820t_set_freq(void *dev, uint32_t freq) { return r820t_SetRfFreqHz_fast(dev, freq); }
 int r820t_set_bw(void *dev, int bw) { return 0; }
 int r820t_set_gain(void *dev, int gain) { return R828_SetRfGain(dev, gain); }
 int r820t_set_gain_mode(void *dev, int manual) { return R828_RfGainMode(dev, manual); }
