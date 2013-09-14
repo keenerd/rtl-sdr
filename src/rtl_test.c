@@ -43,6 +43,7 @@
 #define DEFAULT_BUF_LENGTH		(16 * 16384)
 #define MINIMAL_BUF_LENGTH		512
 #define MAXIMAL_BUF_LENGTH		(256 * 16384)
+#define FLUSH_BUF_LENGTH		4096
 
 #define MHZ(x)	((x)*1000*1000)
 
@@ -102,19 +103,26 @@ static void sighandler(int signum)
 }
 #endif
 
-uint8_t bcnt, uninit = 1;
+uint8_t bcnt;
+uint32_t uninit = FLUSH_BUF_LENGTH;
 
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	uint32_t i, lost = 0;
 	int64_t ns;
 
-	if (uninit) {
-		bcnt = buf[0];
-		uninit = 0;
+	if (uninit >= len) {
+		/* tiny buffer, still more to flush */
+		uninit -= len;
+		bcnt = buf[len-1] + 1;
+		return;
 	}
 
-	for (i = 0; i < len; i++) {
+	if (uninit) {
+		bcnt = buf[uninit];
+	}
+
+	for (i = uninit; i < len; i++) {
 		if(bcnt != buf[i]) {
 			lost += (buf[i] > bcnt) ? (buf[i] - bcnt) : (bcnt - buf[i]);
 			bcnt = buf[i];
@@ -122,6 +130,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 
 		bcnt++;
 	}
+	uninit = 0;
 
 	if (lost)
 		printf("lost at least %d bytes\n", lost);
