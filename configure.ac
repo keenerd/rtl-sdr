@@ -74,8 +74,6 @@ AC_ARG_ENABLE(driver-detach,
 fi])
 
 dnl Generate the output
-AC_CONFIG_HEADER(config.h)
-
 AC_OUTPUT(
 	librtlsdr.pc
 	include/Makefile
