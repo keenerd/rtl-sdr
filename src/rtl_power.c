@@ -622,7 +622,7 @@ void remove_dc(int16_t *data, int length)
 /* works on interleaved data */
 {
 	int i;
-	int16_t  ave;
+	int16_t ave;
 	long sum = 0L;
 	for (i=0; i < length; i+=2) {
 		sum += data[i];
@@ -671,22 +671,24 @@ void scanner(void)
 			fft_buf[j] = (int16_t)ts->buf8[j] - 127;
 		}
 		ds = ts->downsample;
-		if (boxcar) {
+		if (boxcar && ds > 1) {
 			j=2, j2=0;
 			while (j < buf_len) {
 				fft_buf[j2]   += fft_buf[j];
 				fft_buf[j2+1] += fft_buf[j+1];
+				fft_buf[j] = 0;
+				fft_buf[j+1] = 0;
 				j += 2;
 				if (j % (ds*2) == 0) {
 					j2 += 2;}
 			}
-		} else {  /* recursive */
+		} else if (ts->downsample_passes) {  /* recursive */
 			for (j=0; j < ts->downsample_passes; j++) {
 				downsample_iq(fft_buf, buf_len >> j);
 			}
 		}
-		remove_dc(fft_buf, buf_len >> j);
-		remove_dc(fft_buf+1, (buf_len >> j) - 1);
+		remove_dc(fft_buf, buf_len / ds);
+		remove_dc(fft_buf+1, (buf_len / ds) - 1);
 		/* window function and fft */
 		for (offset=0; offset<(buf_len/ds); offset+=(2*bin_len)) {
 			// todo, let rect skip this
