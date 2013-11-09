@@ -94,6 +94,7 @@ struct tuning_state
 	/* having the iq buffer here is wasteful, but will avoid contention */
 	uint8_t *buf8;
 	int buf_len;
+	//int *comp_fir;
 	//pthread_rwlock_t buf_lock;
 	//pthread_mutex_t buf_mutex;
 };
@@ -104,6 +105,7 @@ struct tuning_state tunes[MAX_TUNES];
 int tune_count = 0;
 
 int boxcar = 1;
+int comp_fir_size = 0;
 
 void usage(void)
 {
@@ -132,8 +134,10 @@ void usage(void)
 		"\t[-c crop_percent (default: 0%%, recommended: 20%%-50%%)]\n"
 		"\t (discards data at the edges, 100%% discards everything)\n"
 		"\t (has no effect for bins larger than 1MHz)\n"
-		"\t[-F enables low-leakage downsample filter (default: off)]\n"
-		"\t (has bad roll off, try with '-c 50%%')\n"
+		"\t[-F fir_size (default: disabled)]\n"
+		"\t (enables low-leakage downsample filter,\n"
+		"\t  fir_size can be 0 or 9.  0 has bad roll off,\n"
+		"\t  try with '-c 50%%')\n"
 		"\n"
 		"CSV FFT output columns:\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
@@ -192,6 +196,21 @@ static void sighandler(int signum)
    16 bit ints for everything
    -32768..+32768 maps to -1.0..+1.0
 */
+
+/* {length, coef, coef, coef}  and scaled by 2^15
+   for now, only length 9, optimal way to get +85% bandwidth */
+int cic_9_tables[][10] = {
+	{0,},
+	{9, -156,  -97, 2798, -15489, 61019, -15489, 2798,  -97, -156},
+	{9, -128, -568, 5593, -24125, 74126, -24125, 5593, -568, -128},
+	{9, -129, -639, 6187, -26281, 77511, -26281, 6187, -639, -129},
+	{9, -122, -612, 6082, -26353, 77818, -26353, 6082, -612, -122},
+	{9, -120, -602, 6015, -26269, 77757, -26269, 6015, -602, -120},
+	{9, -120, -582, 5951, -26128, 77542, -26128, 5951, -582, -120},
+	{9, -119, -580, 5931, -26094, 77505, -26094, 5931, -580, -119},
+	{9, -119, -578, 5921, -26077, 77484, -26077, 5921, -578, -119},
+	{9, -119, -577, 5917, -26067, 77473, -26067, 5917, -577, -119},
+};
 
 void sine_table(int size)
 {
@@ -635,6 +654,36 @@ void remove_dc(int16_t *data, int length)
 	}
 }
 
+void generic_fir(int16_t *data, int length, int *fir)
+/* Okay, not at all generic.  Assumes length 9, fix that eventually. */
+{
+	int d, f, temp, sum;
+	int hist[9] = {0,};
+	/* cheat on the beginning, let it go unfiltered */
+	for (d=0; d<18; d+=2) {
+		hist[d/2] = data[d];
+	}
+	for (d=18; d<length; d+=2) {
+		temp = data[d];
+		sum = 0;
+		sum += (hist[0] + hist[8]) * fir[1];
+		sum += (hist[1] + hist[7]) * fir[2];
+		sum += (hist[2] + hist[6]) * fir[3];
+		sum += (hist[3] + hist[5]) * fir[4];
+		sum +=            hist[4]  * fir[5];
+		data[d] = (int16_t)(sum >> 15) ;
+		hist[0] = hist[1];
+		hist[1] = hist[2];
+		hist[2] = hist[3];
+		hist[3] = hist[4];
+		hist[4] = hist[5];
+		hist[5] = hist[6];
+		hist[6] = hist[7];
+		hist[7] = hist[8];
+		hist[8] = temp;
+	}
+}
+
 void downsample_iq(int16_t *data, int length)
 {
 	fifth_order(data, length);
@@ -645,7 +694,7 @@ void downsample_iq(int16_t *data, int length)
 
 void scanner(void)
 {
-	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds;
+	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
 	int32_t w;
 	struct tuning_state *ts;
 	bin_e = tunes[0].bin_e;
@@ -671,6 +720,7 @@ void scanner(void)
 			fft_buf[j] = (int16_t)ts->buf8[j] - 127;
 		}
 		ds = ts->downsample;
+		ds_p = ts->downsample_passes;
 		if (boxcar && ds > 1) {
 			j=2, j2=0;
 			while (j < buf_len) {
@@ -682,9 +732,14 @@ void scanner(void)
 				if (j % (ds*2) == 0) {
 					j2 += 2;}
 			}
-		} else if (ts->downsample_passes) {  /* recursive */
-			for (j=0; j < ts->downsample_passes; j++) {
+		} else if (ds_p) {  /* recursive */
+			for (j=0; j < ds_p; j++) {
 				downsample_iq(fft_buf, buf_len >> j);
+			}
+			/* droop compensation */
+			if (comp_fir_size == 9 && ds_p <= 10) {
+				generic_fir(fft_buf, buf_len >> j, cic_9_tables[ds_p]);
+				generic_fir(fft_buf+1, (buf_len >> j)-1, cic_9_tables[ds_p]);
 			}
 		}
 		remove_dc(fft_buf, buf_len / ds);
@@ -784,7 +839,7 @@ int main(int argc, char **argv)
 	double (*window_fn)(int, int) = rectangle;
 	freq_optarg = "";
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:1Fh")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1h")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			freq_optarg = strdup(optarg);
@@ -840,6 +895,7 @@ int main(int argc, char **argv)
 			break;
 		case 'F':
 			boxcar = 0;
+			comp_fir_size = atoi(optarg);
 			break;
 		case 'h':
 		default:
