@@ -36,6 +36,7 @@
  *	multiple FFT workers
  *	check edge cropping for off-by-one and rounding errors
  *	1.8MS/s for hiding xtal harmonics
+ *	peak hold
  */
 
 #include <errno.h>
@@ -63,9 +64,14 @@
 
 #include "rtl-sdr.h"
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
 #define AUTO_GAIN			-100
 #define BUFFER_DUMP			(1<<12)
+
+#define MAXIMUM_RATE			2800000
+#define MINIMUM_RATE			1000000
 
 static volatile int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
@@ -106,6 +112,7 @@ int tune_count = 0;
 
 int boxcar = 1;
 int comp_fir_size = 0;
+int peak_hold = 0;
 
 void usage(void)
 {
@@ -114,7 +121,7 @@ void usage(void)
 		"Use:\trtl_power -f freq_range [-options] [filename]\n"
 		"\t-f lower:upper:bin_size [Hz]\n"
 		"\t (bin size is a maximum, smaller more convenient bins\n"
-		"\t  will be used.  valid range 1Hz - 2MHz)\n"
+		"\t  will be used.  valid range 1Hz - 2.8MHz)\n"
 		"\t[-i integration_interval (default: 10 seconds)]\n"
 		"\t (buggy if a full sweep takes longer than the interval)\n"
 		"\t[-1 enables single-shot mode (default: off)]\n"
@@ -138,6 +145,7 @@ void usage(void)
 		"\t (enables low-leakage downsample filter,\n"
 		"\t  fir_size can be 0 or 9.  0 has bad roll off,\n"
 		"\t  try with '-c 50%%')\n"
+		"\t[-P enables peak hold (default: off)]\n"
 		"\n"
 		"CSV FFT output columns:\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
@@ -191,14 +199,9 @@ static void sighandler(int signum)
 #define safe_cond_signal(n, m) pthread_mutex_lock(m); pthread_cond_signal(n); pthread_mutex_unlock(m)
 #define safe_cond_wait(n, m) pthread_mutex_lock(m); pthread_cond_wait(n, m); pthread_mutex_unlock(m)
 
-/* FFT based on fix_fft.c by Roberts, Slaney and Bouras
-   http://www.jjj.de/fft/fftpage.html
-   16 bit ints for everything
-   -32768..+32768 maps to -1.0..+1.0
-*/
-
 /* {length, coef, coef, coef}  and scaled by 2^15
    for now, only length 9, optimal way to get +85% bandwidth */
+#define CIC_TABLE_MAX 10
 int cic_9_tables[][10] = {
 	{0,},
 	{9, -156,  -97, 2798, -15489, 61019, -15489, 2798,  -97, -156},
@@ -210,7 +213,14 @@ int cic_9_tables[][10] = {
 	{9, -119, -580, 5931, -26094, 77505, -26094, 5931, -580, -119},
 	{9, -119, -578, 5921, -26077, 77484, -26077, 5921, -578, -119},
 	{9, -119, -577, 5917, -26067, 77473, -26067, 5917, -577, -119},
+	{9, -199, -362, 5303, -25505, 77489, -25505, 5303, -362, -199},
 };
+
+/* FFT based on fix_fft.c by Roberts, Slaney and Bouras
+   http://www.jjj.de/fft/fftpage.html
+   16 bit ints for everything
+   -32768..+32768 maps to -1.0..+1.0
+*/
 
 void sine_table(int size)
 {
@@ -396,7 +406,11 @@ void rms_power(struct tuning_state *ts)
 	err = t * 2 * dc - dc * dc * buf_len;
 	p -= (long)round(err);
 
-	ts->avg[0] += p;
+	if (!peak_hold) {
+		ts->avg[0] += p;
+	} else {
+		ts->avg[0] = MAX(ts->avg[0], p);
+	}
 	ts->samples += 1;
 }
 
@@ -517,28 +531,29 @@ void frequency_range(char *arg, double crop)
 	step[-1] = ':';
 	downsample = 1;
 	downsample_passes = 0;
-	/* evenly sized ranges, as close to 2MHz as possible */
+	/* evenly sized ranges, as close to MAXIMUM_RATE as possible */
+	// todo, replace loop with algebra
 	for (i=1; i<1500; i++) {
 		bw_seen = (upper - lower) / i;
 		bw_used = (int)((double)(bw_seen) / (1.0 - crop));
-		if (bw_used > 2000000) {
+		if (bw_used > MAXIMUM_RATE) {
 			continue;}
 		tune_count = i;
 		break;
 	}
 	/* unless small bandwidth */
-	if (bw_used < 1000000) {
-		tune_count = 1;}
-	if (boxcar && bw_used < 1000000) {
-		downsample = 2000000 / bw_used;
+	if (bw_used < MINIMUM_RATE) {
+		tune_count = 1;
+		downsample = MAXIMUM_RATE / bw_used;
 		bw_used = bw_used * downsample;
 	}
-	while (bw_used < 1000000) {  /* not boxcar */
-		downsample_passes++;
+	if (!boxcar && downsample > 1) {
+		downsample_passes = (int)log2(downsample);
 		downsample = 1 << downsample_passes;
 		bw_used = (int)((double)(bw_seen * downsample) / (1.0 - crop));
 	}
 	/* number of bins is power-of-two, bin size is under limit */
+	// todo, replace loop with log2
 	for (i=1; i<=21; i++) {
 		bin_e = i;
 		bin_size = (double)bw_used / (double)((1<<i) * downsample);
@@ -546,7 +561,7 @@ void frequency_range(char *arg, double crop)
 			break;}
 	}
 	/* unless giant bins */
-	if (max_size >= 1000000) {
+	if (max_size >= MINIMUM_RATE) {
 		bw_seen = max_size;
 		bw_used = max_size;
 		tune_count = (upper - lower) / bw_seen;
@@ -737,7 +752,7 @@ void scanner(void)
 				downsample_iq(fft_buf, buf_len >> j);
 			}
 			/* droop compensation */
-			if (comp_fir_size == 9 && ds_p <= 10) {
+			if (comp_fir_size == 9 && ds_p <= CIC_TABLE_MAX) {
 				generic_fir(fft_buf, buf_len >> j, cic_9_tables[ds_p]);
 				generic_fir(fft_buf+1, (buf_len >> j)-1, cic_9_tables[ds_p]);
 			}
@@ -758,8 +773,14 @@ void scanner(void)
 				fft_buf[offset+j*2+1] = (int16_t)w;
 			}
 			fix_fft(fft_buf+offset, bin_e);
-			for (j=0; j<bin_len; j++) {
-				ts->avg[j] += (long) abs(fft_buf[offset+j*2]);
+			if (!peak_hold) {
+				for (j=0; j<bin_len; j++) {
+					ts->avg[j] += (long) abs(fft_buf[offset+j*2]);
+				}
+			} else {
+				for (j=0; j<bin_len; j++) {
+					ts->avg[j] = MAX((long) abs(fft_buf[offset+j*2]), ts->avg[j]);
+				}
 			}
 			ts->samples += ds;
 		}
@@ -839,7 +860,7 @@ int main(int argc, char **argv)
 	double (*window_fn)(int, int) = rectangle;
 	freq_optarg = "";
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1h")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1Ph")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			freq_optarg = strdup(optarg);
@@ -892,6 +913,9 @@ int main(int argc, char **argv)
 			break;
 		case '1':
 			single = 1;
+			break;
+		case 'P':
+			peak_hold = 1;
 			break;
 		case 'F':
 			boxcar = 0;
