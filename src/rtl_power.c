@@ -146,6 +146,7 @@ void usage(void)
 		"\t  fir_size can be 0 or 9.  0 has bad roll off,\n"
 		"\t  try with '-c 50%%')\n"
 		"\t[-P enables peak hold (default: off)]\n"
+		"\t[-D enable direct sampling (default: off)]\n"
 		"\n"
 		"CSV FFT output columns:\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
@@ -849,6 +850,7 @@ int main(int argc, char **argv)
 	int fft_threads = 1;
 	int smoothing = 0;
 	int single = 0;
+	int direct_sampling = 0;
 	double crop = 0.0;
 	char vendor[256], product[256], serial[256];
 	char *freq_optarg;
@@ -860,7 +862,7 @@ int main(int argc, char **argv)
 	double (*window_fn)(int, int) = rectangle;
 	freq_optarg = "";
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1Ph")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1PDh")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			freq_optarg = strdup(optarg);
@@ -916,6 +918,9 @@ int main(int argc, char **argv)
 			break;
 		case 'P':
 			peak_hold = 1;
+			break;
+		case 'D':
+			direct_sampling = 1;
 			break;
 		case 'F':
 			boxcar = 0;
@@ -986,6 +991,15 @@ int main(int argc, char **argv)
 #else
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
+
+	if (direct_sampling) {
+		r = rtlsdr_set_direct_sampling(dev,1);
+	}
+	if (r != 0) {
+		fprintf(stderr, "WARNING: Failed to set direct sampling mode.\n");
+	} else if (gain == AUTO_GAIN) {
+		fprintf(stderr, "Direct sampling mode enabled.\n");
+	}
 
 	/* Set the tuner gain */
 	if (gain == AUTO_GAIN) {
