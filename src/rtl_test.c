@@ -55,6 +55,9 @@ static int ppm_benchmark = 0;
 static int64_t ppm_count = 0L;
 static int64_t ppm_total = 0L;
 
+long total_samples;
+long dropped_samples;
+
 #ifndef _WIN32
 static struct timespec ppm_start;
 static struct timespec ppm_recent;
@@ -104,16 +107,13 @@ static void sighandler(int signum)
 
 uint8_t bcnt, uninit = 1;
 
-static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
+static void underrun_test(unsigned char *buf, uint32_t len, int mute)
 {
 	uint32_t i, lost = 0;
-	int64_t ns;
-
 	if (uninit) {
 		bcnt = buf[0];
 		uninit = 0;
 	}
-
 	for (i = 0; i < len; i++) {
 		if(bcnt != buf[i]) {
 			lost += (buf[i] > bcnt) ? (buf[i] - bcnt) : (bcnt - buf[i]);
@@ -123,12 +123,19 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 		bcnt++;
 	}
 
-	if (lost)
-		printf("lost at least %d bytes\n", lost);
+	total_samples += (long)len;
+	dropped_samples += (long)lost;
+	if (mute) {
+		return;}
+	if (lost) {
+		printf("lost at least %d bytes\n", lost);}
 
-	if (!ppm_benchmark) {
-		return;
-	}
+}
+
+static void ppm_test(uint32_t len)
+{
+	int64_t ns;
+
 	ppm_count += (int64_t)len;
 #ifndef _WIN32
 	#ifndef __APPLE__
@@ -154,6 +161,15 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 		ppm_count = 0L;
 	}
 #endif
+}
+
+static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
+{
+	underrun_test(buf, len, 0);
+
+	if (ppm_benchmark) {
+		ppm_test(len);
+	}
 }
 
 void e4k_benchmark(void)
@@ -345,6 +361,7 @@ int main(int argc, char **argv)
 
 	if (sync_mode) {
 		fprintf(stderr, "Reading samples in sync mode...\n");
+		fprintf(stderr, "(Samples are being lost but not reported.)\n");
 		while (!do_exit) {
 			r = rtlsdr_read_sync(dev, buffer, out_block_size, &n_read);
 			if (r < 0) {
@@ -356,6 +373,7 @@ int main(int argc, char **argv)
 				fprintf(stderr, "Short read, samples lost, exiting!\n");
 				break;
 			}
+			underrun_test(buffer, n_read, 1);
 		}
 	} else {
 		fprintf(stderr, "Reading samples in async mode...\n");
@@ -365,6 +383,7 @@ int main(int argc, char **argv)
 
 	if (do_exit) {
 		fprintf(stderr, "\nUser cancel, exiting...\n");
+		fprintf(stderr, "Samples per million lost (minimum): %i\n", (int)(1000000L * dropped_samples / total_samples));
 		if (ppm_benchmark) {
 #ifndef _WIN32
 			ns = 1000000000L * (int64_t)(ppm_recent.tv_sec - ppm_start.tv_sec);
