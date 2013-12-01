@@ -36,7 +36,6 @@
  *	multiple FFT workers
  *	check edge cropping for off-by-one and rounding errors
  *	1.8MS/s for hiding xtal harmonics
- *	peak hold
  */
 
 #include <errno.h>
@@ -147,6 +146,7 @@ void usage(void)
 		"\t  try with '-c 50%%')\n"
 		"\t[-P enables peak hold (default: off)]\n"
 		"\t[-D enable direct sampling (default: off)]\n"
+		"\t[-O enable offset tuning (default: off)]\n"
 		"\n"
 		"CSV FFT output columns:\n"
 		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
@@ -851,6 +851,7 @@ int main(int argc, char **argv)
 	int smoothing = 0;
 	int single = 0;
 	int direct_sampling = 0;
+	int offset_tuning = 0;
 	double crop = 0.0;
 	char vendor[256], product[256], serial[256];
 	char *freq_optarg;
@@ -862,7 +863,7 @@ int main(int argc, char **argv)
 	double (*window_fn)(int, int) = rectangle;
 	freq_optarg = "";
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1PDh")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1PDOh")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			freq_optarg = strdup(optarg);
@@ -921,6 +922,9 @@ int main(int argc, char **argv)
 			break;
 		case 'D':
 			direct_sampling = 1;
+			break;
+		case 'O':
+			offset_tuning = 1;
 			break;
 		case 'F':
 			boxcar = 0;
@@ -993,12 +997,21 @@ int main(int argc, char **argv)
 #endif
 
 	if (direct_sampling) {
-		r = rtlsdr_set_direct_sampling(dev,1);
+		r = rtlsdr_set_direct_sampling(dev, 1);
+		if (r != 0) {
+			fprintf(stderr, "WARNING: Failed to set direct sampling mode.\n");
+		} else {
+			fprintf(stderr, "Direct sampling mode enabled.\n");
+		}
 	}
-	if (r != 0) {
-		fprintf(stderr, "WARNING: Failed to set direct sampling mode.\n");
-	} else if (gain == AUTO_GAIN) {
-		fprintf(stderr, "Direct sampling mode enabled.\n");
+
+	if (offset_tuning) {
+		r = rtlsdr_set_offset_tuning(dev, 1);
+		if (r != 0) {
+			fprintf(stderr, "WARNING: Failed to set offset tuning.\n");
+		} else {
+			fprintf(stderr, "Offset tuning mode enabled.\n");
+		}
 	}
 
 	/* Set the tuner gain */
