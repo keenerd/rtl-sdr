@@ -51,6 +51,7 @@ void usage(void)
 		"\t[-s samplerate (default: 2048000 Hz)]\n"
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-g gain (default: 0 for auto)]\n"
+		"\t[-p ppm_error (default: 0)]\n"
 		"\t[-b output_block_size (default: 16 * 16384)]\n"
 		"\t[-n number of samples to read (default: 0, infinite)]\n"
 		"\t[-S force sync output (default: async)]\n"
@@ -110,6 +111,7 @@ int main(int argc, char **argv)
 	int n_read;
 	int r, opt;
 	int i, gain = 0;
+	int ppm_error = 0;
 	int sync_mode = 0;
 	FILE *file;
 	uint8_t *buffer;
@@ -120,7 +122,7 @@ int main(int argc, char **argv)
 	int device_count;
 	char vendor[256], product[256], serial[256];
 
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:n:S::")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:g:s:b:n:p:S::")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = atoi(optarg);
@@ -133,6 +135,9 @@ int main(int argc, char **argv)
 			break;
 		case 's':
 			samp_rate = (uint32_t)atof(optarg);
+			break;
+		case 'p':
+			ppm_error = atoi(optarg);
 			break;
 		case 'b':
 			out_block_size = (uint32_t)atof(optarg);
@@ -229,6 +234,15 @@ int main(int argc, char **argv)
 			fprintf(stderr, "WARNING: Failed to set tuner gain.\n");
 		else
 			fprintf(stderr, "Tuner gain set to %f dB.\n", gain/10.0);
+	}
+
+	if (ppm_error != 0) {
+		r = rtlsdr_set_freq_correction(dev, ppm_error);
+		if (r < 0) {
+			fprintf(stderr, "WARNING: Failed to set ppm error.\n");
+		} else {
+			fprintf(stderr, "Tuner error set to %i ppm.\n", ppm_error);
+		}
 	}
 
 	if(strcmp(filename, "-") == 0) { /* Write samples to stdout */
