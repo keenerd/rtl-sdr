@@ -105,6 +105,7 @@ struct dongle_state
 	uint32_t buf_len;
 	int      ppm_error;
 	int      offset_tuning;
+	int      direct_sampling;
 	int      mute;
 	struct demod_state *demod_target;
 };
@@ -186,7 +187,7 @@ void usage(void)
 		"\t    ranges supported, -f 118M:137M:25k\n"
 		"\t[-M modulation (default: fm)]\n"
 		"\t    fm, wbfm, raw, am, usb, lsb\n"
-		"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -D\n"
+		"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -E deemp\n"
 		"\t    raw mode outputs 2x16 bit IQ pairs\n"
 		"\t[-s sample_rate (default: 24k)]\n"
 		"\t[-d device_index (default: 0)]\n"
@@ -195,7 +196,13 @@ void usage(void)
 		//"\t    for fm squelch is inverted\n"
 		"\t[-o oversampling (default: 1, 4 recommended)]\n"
 		"\t[-p ppm_error (default: 0)]\n"
-		"\t[-E sets lower edge tuning (default: center)]\n"
+		"\t[-E enable_option (default: none)]\n"
+		"\t    use multiple -E to enable multiple options\n"
+		"\t    edge:   enable lower edge tuning\n"
+		"\t    dc:     enable dc blocking filter\n"
+		"\t    deemp:  enable de-emphasis filter\n"
+		"\t    direct: enable direct sampling\n"
+		"\t    offset: enable offset tuning\n"
 		"\tfilename ('-' means stdout)\n"
 		"\t    omitting the filename also uses stdout\n\n"
 		"Experimental options:\n"
@@ -205,8 +212,6 @@ void usage(void)
 		"\t[-F fir_size (default: off)]\n"
 		"\t    enables low-leakage downsample filter\n"
 		"\t    size can be 0 or 9.  0 has bad roll off\n"
-		"\t[-D enables de-emphasis (default: off)]\n"
-		"\t[-C enables DC blocking of output (default: off)]\n"
 		"\t[-A std/fast/lut choose atan math (default: std)]\n"
 		//"\t[-C clip_path (default: off)\n"
 		//"\t (create time stamped raw clips, requires squelch)\n"
@@ -878,8 +883,12 @@ static void *controller_thread_fn(void *arg)
 
 	/* set up primary channel */
 	optimal_settings(s->freqs[0], demod.rate_in);
+	if (dongle.direct_sampling) {
+		verbose_direct_sampling(dongle.dev, 1);}
+	if (dongle.offset_tuning) {
+		verbose_offset_tuning(dongle.dev);}
+
 	/* Set the frequency */
-	
 	verbose_set_frequency(dongle.dev, dongle.freq);
 	fprintf(stderr, "Oversampling input by: %ix.\n", demod.downsample);
 	fprintf(stderr, "Oversampling output by: %ix.\n", demod.post_downsample);
@@ -888,10 +897,7 @@ static void *controller_thread_fn(void *arg)
 
 	/* Set the sample rate */
 	verbose_set_sample_rate(dongle.dev, dongle.rate);
-	if (demod.rate_out > 0) {
-		fprintf(stderr, "Output at %u Hz.\n", demod.rate_in);
-	} else {
-		fprintf(stderr, "Output at %u Hz.\n", demod.rate_in/demod.post_downsample);}
+	fprintf(stderr, "Output at %u Hz.\n", demod.rate_in/demod.post_downsample);
 
 	while (!do_exit) {
 		safe_cond_wait(&s->hop, &s->hop_m);
@@ -931,6 +937,8 @@ void dongle_init(struct dongle_state *s)
 	s->rate = DEFAULT_SAMPLE_RATE;
 	s->gain = AUTO_GAIN; // tenths of a dB
 	s->mute = 0;
+	s->direct_sampling = 0;
+	s->offset_tuning = 0;
 	s->demod_target = &demod;
 }
 
@@ -1012,7 +1020,7 @@ int main(int argc, char **argv)
 	output_init(&output);
 	controller_init(&controller);
 
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EF:A:M:DCh")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h")) != -1) {
 		switch (opt) {
 		case 'd':
 			dongle.dev_index = verbose_device_search(optarg);
@@ -1059,7 +1067,16 @@ int main(int argc, char **argv)
 			dongle.ppm_error = atoi(optarg);
 			break;
 		case 'E':
-			controller.edge = 1;
+			if (strcmp("edge",  optarg) == 0) {
+				controller.edge = 1;}
+			if (strcmp("dc", optarg) == 0) {
+				demod.dc_block = 1;}
+			if (strcmp("deemp",  optarg) == 0) {
+				demod.deemph = 1;}
+			if (strcmp("direct",  optarg) == 0) {
+				dongle.direct_sampling = 1;}
+			if (strcmp("offset",  optarg) == 0) {
+				dongle.offset_tuning = 1;}
 			break;
 		case 'F':
 			demod.downsample_passes = 1;  /* truthy placeholder */
@@ -1073,12 +1090,6 @@ int main(int argc, char **argv)
 			if (strcmp("lut",  optarg) == 0) {
 				atan_lut_init();
 				demod.custom_atan = 2;}
-			break;
-		case 'D':
-			demod.deemph = 1;
-			break;
-		case 'C':
-			demod.dc_block = 1;
 			break;
 		case 'M':
 			if (strcmp("fm",  optarg) == 0) {
