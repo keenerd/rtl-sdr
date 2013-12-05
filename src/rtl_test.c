@@ -106,11 +106,11 @@ static void sighandler(int signum)
 }
 #endif
 
-uint8_t bcnt, uninit = 1;
-
 static void underrun_test(unsigned char *buf, uint32_t len, int mute)
 {
 	uint32_t i, lost = 0;
+	static uint8_t bcnt, uninit = 1;
+
 	if (uninit) {
 		bcnt = buf[0];
 		uninit = 0;
