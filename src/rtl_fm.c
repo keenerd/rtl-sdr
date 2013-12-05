@@ -70,6 +70,7 @@
 #include <libusb.h>
 
 #include "rtl-sdr.h"
+#include "convenience/convenience.h"
 
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_ASYNC_BUF_NUMBER	32
@@ -94,7 +95,7 @@ struct dongle_state
 	int      exit_flag;
 	pthread_t thread;
 	rtlsdr_dev_t *dev;
-	uint32_t dev_index;
+	int      dev_index;
 	uint32_t freq;
 	uint32_t rate;
 	int      gain;
@@ -181,10 +182,10 @@ void usage(void)
 		"\t-f frequency_to_tune_to [Hz]\n"
 		"\t    use multiple -f for scanning (requires squelch)\n"
 		"\t    ranges supported, -f 118M:137M:25k\n"
-		"\t    raw mode outputs 2x16 bit IQ pairs\n"
 		"\t[-M modulation (default: fm)]\n"
 		"\t    fm, wbfm, raw, am, usb, lsb\n"
 		"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -D\n"
+		"\t    raw mode outputs 2x16 bit IQ pairs\n"
 		"\t[-s sample_rate (default: 24k)]\n"
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-g tuner_gain (default: automatic)]\n"
@@ -876,25 +877,19 @@ static void *controller_thread_fn(void *arg)
 	/* set up primary channel */
 	optimal_settings(s->freqs[0], demod.rate_in);
 	/* Set the frequency */
-	r = rtlsdr_set_center_freq(dongle.dev, dongle.freq);
+	
+	verbose_set_frequency(dongle.dev, dongle.freq);
 	fprintf(stderr, "Oversampling input by: %ix.\n", demod.downsample);
 	fprintf(stderr, "Oversampling output by: %ix.\n", demod.post_downsample);
 	fprintf(stderr, "Buffer size: %0.2fms\n",
 		1000 * 0.5 * (float)ACTUAL_BUF_LENGTH / (float)dongle.rate);
-	if (r < 0) {
-		fprintf(stderr, "WARNING: Failed to set center freq.\n");}
-	else {
-		fprintf(stderr, "Tuned to %u Hz.\n", dongle.freq);}
 
 	/* Set the sample rate */
-	fprintf(stderr, "Sampling at %u Hz.\n", dongle.rate);
+	verbose_set_sample_rate(dongle.dev, dongle.rate);
 	if (demod.rate_out > 0) {
 		fprintf(stderr, "Output at %u Hz.\n", demod.rate_in);
 	} else {
 		fprintf(stderr, "Output at %u Hz.\n", demod.rate_in/demod.post_downsample);}
-	r = rtlsdr_set_sample_rate(dongle.dev, dongle.rate);
-	if (r < 0) {
-		fprintf(stderr, "WARNING: Failed to set sample rate.\n");}
 
 	while (!do_exit) {
 		safe_cond_wait(&s->hop, &s->hop_m);
@@ -907,33 +902,6 @@ static void *controller_thread_fn(void *arg)
 		dongle.mute = BUFFER_DUMP;
 	}
 	return 0;
-}
-
-double atofs(char *f)
-/* standard suffixes */
-{
-	char last;
-	int len;
-	double suff = 1.0;
-	len = strlen(f);
-	last = f[len-1];
-	f[len-1] = '\0';
-	switch (last) {
-		case 'g':
-		case 'G':
-			suff *= 1e3;
-		case 'm':
-		case 'M':
-			suff *= 1e3;
-		case 'k':
-		case 'K':
-			suff *= 1e3;
-			suff *= atof(f);
-			f[len-1] = last;
-			return suff;
-	}
-	f[len-1] = last;
-	return atof(f);
 }
 
 void frequency_range(struct controller_state *s, char *arg)
@@ -954,28 +922,6 @@ void frequency_range(struct controller_state *s, char *arg)
 	}
 	stop[-1] = ':';
 	step[-1] = ':';
-}
-
-int nearest_gain(rtlsdr_dev_t *dev, int target_gain)
-{
-	int i, err1, err2, count, close_gain;
-	int* gains;
-	count = rtlsdr_get_tuner_gains(dev, NULL);
-	if (count <= 0) {
-		return 0;
-	}
-	gains = malloc(sizeof(int) * count);
-	count = rtlsdr_get_tuner_gains(dev, gains);
-	close_gain = gains[0];
-	for (i=0; i<count; i++) {
-		err1 = abs(target_gain - close_gain);
-		err2 = abs(target_gain - gains[i]);
-		if (err2 < err1) {
-			close_gain = gains[i];
-		}
-	}
-	free(gains);
-	return close_gain;
 }
 
 void dongle_init(struct dongle_state *s)
@@ -1058,8 +1004,7 @@ int main(int argc, char **argv)
 #endif
 	int n_read, r, opt;
 	int i;
-	int device_count;
-	char vendor[256], product[256], serial[256];
+	int dev_given = 0;
 	dongle_init(&dongle);
 	demod_init(&demod);
 	output_init(&output);
@@ -1068,7 +1013,8 @@ int main(int argc, char **argv)
 	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EF:A:M:DCh")) != -1) {
 		switch (opt) {
 		case 'd':
-			dongle.dev_index = atoi(optarg);
+			dongle.dev_index = verbose_device_search(optarg);
+			dev_given = 1;
 			break;
 		case 'f':
 			if (controller.freq_len >= FREQUENCIES_LIMIT) {
@@ -1180,23 +1126,15 @@ int main(int argc, char **argv)
 
 	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
 
-	device_count = rtlsdr_get_device_count();
-	if (!device_count) {
-		fprintf(stderr, "No supported devices found.\n");
+	if (!dev_given) {
+		dongle.dev_index = verbose_device_search("0");
+	}
+
+	if (dongle.dev_index < 0) {
 		exit(1);
 	}
 
-	fprintf(stderr, "Found %d device(s):\n", device_count);
-	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
-		fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
-	}
-	fprintf(stderr, "\n");
-
-	fprintf(stderr, "Using device %d: %s\n",
-		dongle.dev_index, rtlsdr_get_device_name(dongle.dev_index));
-
-	r = rtlsdr_open(&dongle.dev, dongle.dev_index);
+	r = rtlsdr_open(&dongle.dev, (uint32_t)dongle.dev_index);
 	if (r < 0) {
 		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index);
 		exit(1);
@@ -1219,20 +1157,13 @@ int main(int argc, char **argv)
 
 	/* Set the tuner gain */
 	if (dongle.gain == AUTO_GAIN) {
-		r = rtlsdr_set_tuner_gain_mode(dongle.dev, 0);
+		verbose_auto_gain(dongle.dev);
 	} else {
-		r = rtlsdr_set_tuner_gain_mode(dongle.dev, 1);
 		dongle.gain = nearest_gain(dongle.dev, dongle.gain);
-		r = rtlsdr_set_tuner_gain(dongle.dev, dongle.gain);
+		verbose_gain_set(dongle.dev, dongle.gain);
 	}
-	if (r != 0) {
-		fprintf(stderr, "WARNING: Failed to set tuner gain.\n");
-	} else if (dongle.gain == AUTO_GAIN) {
-		fprintf(stderr, "Tuner gain set to automatic.\n");
-	} else {
-		fprintf(stderr, "Tuner gain set to %0.2f dB.\n", dongle.gain/10.0);
-	}
-	r = rtlsdr_set_freq_correction(dongle.dev, dongle.ppm_error);
+
+	verbose_ppm_set(dongle.dev, dongle.ppm_error);
 
 	if (strcmp(output.filename, "-") == 0) { /* Write samples to stdout */
 		output.file = stdout;
@@ -1250,9 +1181,7 @@ int main(int argc, char **argv)
 	//r = rtlsdr_set_testmode(dongle.dev, 1);
 
 	/* Reset endpoint before we start reading from it (mandatory) */
-	r = rtlsdr_reset_buffer(dongle.dev);
-	if (r < 0) {
-		fprintf(stderr, "WARNING: Failed to reset buffers.\n");}
+	verbose_reset_buffer(dongle.dev);
 
 	pthread_create(&controller.thread, NULL, controller_thread_fn, (void *)(&controller));
 	usleep(100000);
