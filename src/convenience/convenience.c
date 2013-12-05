@@ -29,7 +29,6 @@
 #include <windows.h>
 #include <fcntl.h>
 #include <io.h>
-#define round(x) (x > 0.0 ? floor(x + 0.5): ceil(x - 0.5))
 #define _USE_MATH_DEFINES
 #endif
 

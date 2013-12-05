@@ -55,6 +55,9 @@ if(WIN32)
 add_library(libgetopt_static STATIC
     getopt/getopt.c
 )
+target_link_libraries(convenience_static
+    rtlsdr_shared
+)
 endif()
 
 target_link_libraries(rtlsdr_static
