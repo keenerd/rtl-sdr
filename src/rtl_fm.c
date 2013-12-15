@@ -119,6 +119,8 @@ struct demod_state
 	int16_t  lp_i_hist[10][6];
 	int16_t  lp_q_hist[10][6];
 	int16_t  result[MAXIMUM_BUF_LENGTH];
+	int16_t  droop_i_hist[9];
+	int16_t  droop_q_hist[9];
 	int      result_len;
 	int      rate_in;
 	int      rate_out;
@@ -382,16 +384,11 @@ void fifth_order(int16_t *data, int length, int16_t *hist)
 	hist[5] = f;
 }
 
-void generic_fir(int16_t *data, int length, int *fir)
+void generic_fir(int16_t *data, int length, int *fir, int16_t *hist)
 /* Okay, not at all generic.  Assumes length 9, fix that eventually. */
 {
 	int d, f, temp, sum;
-	int16_t hist[9] = {0,};
-	/* cheat on the beginning, let it go unfiltered */
-	for (d=0; d<18; d+=2) {
-		hist[d/2] = data[d];
-	}
-	for (d=18; d<length; d+=2) {
+	for (d=0; d<length; d+=2) {
 		temp = data[d];
 		sum = 0;
 		sum += (hist[0] + hist[8]) * fir[1];
@@ -738,8 +735,10 @@ void full_demod(struct demod_state *d)
 		d->lp_len = d->lp_len >> ds_p;
 		/* droop compensation */
 		if (d->comp_fir_size == 9 && ds_p <= CIC_TABLE_MAX) {
-			generic_fir(d->lowpassed, d->lp_len, cic_9_tables[ds_p]);
-			generic_fir(d->lowpassed+1, d->lp_len-1, cic_9_tables[ds_p]);
+			generic_fir(d->lowpassed, d->lp_len,
+				cic_9_tables[ds_p], d->droop_i_hist);
+			generic_fir(d->lowpassed+1, d->lp_len-1, 
+				cic_9_tables[ds_p], d->droop_q_hist);
 		}
 	} else {
 		low_pass(d);
