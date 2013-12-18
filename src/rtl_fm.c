@@ -972,12 +972,26 @@ void demod_init(struct demod_state *s)
 	s->output_target = &output;
 }
 
+void demod_cleanup(struct demod_state *s)
+{
+	pthread_rwlock_destroy(&s->rw);
+	pthread_cond_destroy(&s->ready);
+	pthread_mutex_destroy(&s->ready_m);
+}
+
 void output_init(struct output_state *s)
 {
 	s->rate = DEFAULT_SAMPLE_RATE;
 	pthread_rwlock_init(&s->rw, NULL);
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
+}
+
+void output_cleanup(struct output_state *s)
+{
+	pthread_rwlock_destroy(&s->rw);
+	pthread_cond_destroy(&s->ready);
+	pthread_mutex_destroy(&s->ready_m);
 }
 
 void controller_init(struct controller_state *s)
@@ -988,6 +1002,12 @@ void controller_init(struct controller_state *s)
 	s->wb_mode = 0;
 	pthread_cond_init(&s->hop, NULL);
 	pthread_mutex_init(&s->hop_m, NULL);
+}
+
+void controller_cleanup(struct controller_state *s)
+{
+	pthread_cond_destroy(&s->hop);
+	pthread_mutex_destroy(&s->hop_m);
 }
 
 void sanity_checks(void)
@@ -1227,9 +1247,10 @@ int main(int argc, char **argv)
 	safe_cond_signal(&controller.hop, &controller.hop_m);
 	pthread_join(controller.thread, NULL);
 
-	//pthread_cond_destroy(&data_ready);
-	//pthread_rwlock_destroy(&data_rw);
-	//pthread_mutex_destroy(&data_mutex);
+	//dongle_cleanup(&dongle);
+	demod_cleanup(&demod);
+	output_cleanup(&output);
+	controller_cleanup(&controller);
 
 	if (output.file != stdout) {
 		fclose(output.file);}
