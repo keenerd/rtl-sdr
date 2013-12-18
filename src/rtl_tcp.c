@@ -95,7 +95,8 @@ void usage(void)
 		"\t[-s samplerate in Hz (default: 2048000 Hz)]\n"
 		"\t[-b number of buffers (default: 32, set by library)]\n"
 		"\t[-n max number of linked list buffers to keep (default: 500)]\n"
-		"\t[-d device index (default: 0)]\n");
+		"\t[-d device index (default: 0)]\n"
+		"\t[-P ppm_error (default: 0)]\n");
 	exit(1);
 }
 
@@ -398,6 +399,8 @@ int main(int argc, char **argv)
 	int dev_index = 0;
 	int dev_given = 0;
 	int gain = 0;
+	int ppm_error = 0;
+	int custom_ppm = 0;
 	struct llist *curelem,*prev;
 	pthread_attr_t attr;
 	void *status;
@@ -415,7 +418,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = verbose_device_search(optarg);
@@ -442,6 +445,9 @@ int main(int argc, char **argv)
 		case 'n':
 			llbuf_num = atoi(optarg);
 			break;
+		case 'P':
+			ppm_error = atoi(optarg);
+			custom_ppm = 1;
 		default:
 			usage();
 			break;
@@ -477,6 +483,13 @@ int main(int argc, char **argv)
 #else
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
+
+	/* Set the tuner error */
+	if (!custom_ppm) {
+		verbose_ppm_eeprom(dev, &ppm_error);
+	}
+	verbose_ppm_set(dev, ppm_error);
+
 	/* Set the sample rate */
 	r = rtlsdr_set_sample_rate(dev, samp_rate);
 	if (r < 0)

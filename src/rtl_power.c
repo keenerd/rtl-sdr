@@ -754,6 +754,7 @@ int main(int argc, char **argv)
 	int dev_index = 0;
 	int dev_given = 0;
 	int ppm_error = 0;
+	int custom_ppm = 0;
 	int interval = 10;
 	int fft_threads = 1;
 	int smoothing = 0;
@@ -821,6 +822,7 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			ppm_error = atoi(optarg);
+			custom_ppm = 1;
 			break;
 		case '1':
 			single = 1;
@@ -912,6 +914,9 @@ int main(int argc, char **argv)
 		verbose_gain_set(dev, gain);
 	}
 
+	if (!custom_ppm) {
+		verbose_ppm_eeprom(dev, &ppm_error);
+	}
 	verbose_ppm_set(dev, ppm_error);
 
 	if (strcmp(filename, "-") == 0) { /* Write log to stdout */

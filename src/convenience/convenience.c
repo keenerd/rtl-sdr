@@ -232,6 +232,34 @@ int verbose_ppm_set(rtlsdr_dev_t *dev, int ppm_error)
 	return r;
 }
 
+int verbose_ppm_eeprom(rtlsdr_dev_t *dev, int *ppm_error)
+{
+	#define start_char ' '
+	#define stop_char 'p'
+	int i, r, len, status = -1;
+	char vendor[256], product[256], serial[256];
+	r = rtlsdr_get_usb_strings(dev, vendor, product, serial);
+	if (r) {
+		return r;
+	}
+	len = strlen(serial);
+	if (len <= 3) {
+		return -1;}
+	if (serial[len-1] != stop_char) {
+		return -1;}
+	serial[len-1] = '\0';
+	for (i=len-3; i>=0; i--) {
+		if (serial[i] != start_char) {
+			continue;}
+		fprintf(stderr, "PPM calibration found in eeprom.\n");
+		status = 0;
+		*ppm_error = atoi(serial + i + 1);
+		break;
+	}
+	serial[len-1] = stop_char;
+	return status;
+}
+
 int verbose_reset_buffer(rtlsdr_dev_t *dev)
 {
 	int r;

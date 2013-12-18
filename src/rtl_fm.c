@@ -748,6 +748,9 @@ void full_demod(struct demod_state *d)
 		sr = rms(d->lowpassed, d->lp_len, 1);
 		if (sr < d->squelch_level) {
 			d->squelch_hits++;
+			for (i=0; i<d->lp_len; i++) {
+				d->lowpassed[i] = 0;
+			}
 		} else {
 			d->squelch_hits = 0;}
 	}
@@ -1014,6 +1017,7 @@ int main(int argc, char **argv)
 	int n_read, r, opt;
 	int i;
 	int dev_given = 0;
+	int custom_ppm = 0;
 	dongle_init(&dongle);
 	demod_init(&demod);
 	output_init(&output);
@@ -1064,6 +1068,7 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			dongle.ppm_error = atoi(optarg);
+			custom_ppm = 1;
 			break;
 		case 'E':
 			if (strcmp("edge",  optarg) == 0) {
@@ -1175,6 +1180,9 @@ int main(int argc, char **argv)
 		verbose_gain_set(dongle.dev, dongle.gain);
 	}
 
+	if (!custom_ppm) {
+		verbose_ppm_eeprom(dongle.dev, &(dongle.ppm_error));
+	}
 	verbose_ppm_set(dongle.dev, dongle.ppm_error);
 
 	if (strcmp(output.filename, "-") == 0) { /* Write samples to stdout */
