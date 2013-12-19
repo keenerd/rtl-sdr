@@ -53,8 +53,10 @@ static int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
 
 static int ppm_benchmark = 0;
+static int ppm_running = 0;
 static int64_t ppm_count = 0L;
 static int64_t ppm_total = 0L;
+uint32_t samp_rate = DEFAULT_SAMPLE_RATE;
 
 long total_samples;
 long dropped_samples;
@@ -133,6 +135,30 @@ static void underrun_test(unsigned char *buf, uint32_t len, int mute)
 
 }
 
+static void ppm_clock_init(void)
+{
+#ifdef __APPLE__
+	gettimeofday(&tv, NULL);
+	ppm_recent.tv_sec = tv.tv_sec;
+	ppm_recent.tv_nsec = tv.tv_usec*1000;
+	ppm_start.tv_sec = tv.tv_sec;
+	ppm_start.tv_nsec = tv.tv_usec*1000;
+#elif __unix__
+	clock_gettime(CLOCK_REALTIME, &ppm_recent);
+	clock_gettime(CLOCK_REALTIME, &ppm_start);
+#endif
+}
+
+static int ppm_report(void)
+{
+	int real_rate;
+	int64_t ns;
+	ns = 1000000000L * (int64_t)(ppm_recent.tv_sec - ppm_start.tv_sec);
+	ns += (int64_t)(ppm_recent.tv_nsec - ppm_start.tv_nsec);
+	real_rate = (int)(ppm_total * 1000000000L / ns);
+	return (int)round((double)(1000000 * (real_rate - (int)samp_rate)) / (double)samp_rate);
+}
+
 static void ppm_test(uint32_t len)
 {
 	int64_t ns;
@@ -149,7 +175,7 @@ static void ppm_test(uint32_t len)
 	if (ppm_now.tv_sec - ppm_recent.tv_sec > PPM_DURATION) {
 		ns = 1000000000L * (int64_t)(ppm_now.tv_sec - ppm_recent.tv_sec);
 		ns += (int64_t)(ppm_now.tv_nsec - ppm_recent.tv_nsec);
-		printf("real sample rate: %i\n",
+		printf("real sample rate: %i",
 		(int)((1000000000L * ppm_count / 2L) / ns));
 		#ifndef __APPLE__
 		clock_gettime(CLOCK_REALTIME, &ppm_recent);
@@ -160,6 +186,7 @@ static void ppm_test(uint32_t len)
 		#endif
 		ppm_total += ppm_count / 2L;
 		ppm_count = 0L;
+		printf("  cumulative ppm: %i\n", ppm_report());
 	}
 #endif
 }
@@ -167,6 +194,12 @@ static void ppm_test(uint32_t len)
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	underrun_test(buf, len, 0);
+
+	if (ppm_benchmark && !ppm_running) {
+		ppm_clock_init();
+		ppm_running = 1;
+		return;
+	}
 
 	if (ppm_benchmark) {
 		ppm_test(len);
@@ -231,12 +264,9 @@ int main(int argc, char **argv)
 	uint8_t *buffer;
 	int dev_index = 0;
 	int dev_given = 0;
-	uint32_t samp_rate = DEFAULT_SAMPLE_RATE;
 	uint32_t out_block_size = DEFAULT_BUF_LENGTH;
 	int count;
 	int gains[100];
-	int real_rate;
-	int64_t ns;
 
 	while ((opt = getopt(argc, argv, "d:s:b:tpS::")) != -1) {
 		switch (opt) {
@@ -331,16 +361,6 @@ int main(int argc, char **argv)
 	if (ppm_benchmark && !sync_mode) {
 		fprintf(stderr, "Reporting PPM error measurement every %i seconds...\n", ppm_benchmark);
 		fprintf(stderr, "Press ^C after a few minutes.\n");
-#ifdef __APPLE__
-		gettimeofday(&tv, NULL);
-		ppm_recent.tv_sec = tv.tv_sec;
-		ppm_recent.tv_nsec = tv.tv_usec*1000;
-		ppm_start.tv_sec = tv.tv_sec;
-		ppm_start.tv_nsec = tv.tv_usec*1000;
-#elif __unix__
-		clock_gettime(CLOCK_REALTIME, &ppm_recent);
-		clock_gettime(CLOCK_REALTIME, &ppm_start);
-#endif
 	}
 
 	if (!ppm_benchmark) {
@@ -375,15 +395,11 @@ int main(int argc, char **argv)
 	if (do_exit) {
 		fprintf(stderr, "\nUser cancel, exiting...\n");
 		fprintf(stderr, "Samples per million lost (minimum): %i\n", (int)(1000000L * dropped_samples / total_samples));
-		if (ppm_benchmark) {
 #ifndef _WIN32
-			ns = 1000000000L * (int64_t)(ppm_recent.tv_sec - ppm_start.tv_sec);
-			ns += (int64_t)(ppm_recent.tv_nsec - ppm_start.tv_nsec);
-			real_rate = (int)(ppm_total * 1000000000L / ns);
-			printf("Cumulative PPM error: %i\n",
-			(int)round((double)(1000000 * (real_rate - (int)samp_rate)) / (double)samp_rate));
-#endif
+		if (ppm_benchmark) {
+			printf("Cumulative PPM error: %i\n", ppm_report());
 		}
+#endif
 	}
 	else
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);
