@@ -271,6 +271,12 @@ int cic_9_tables[][10] = {
 	{9, -199, -362, 5303, -25505, 77489, -25505, 5303, -362, -199},
 };
 
+#ifdef _MSC_VER
+double log2(double n)
+{
+	return log(n) / log(2.0);
+}
+#endif
 
 void rotate_90(unsigned char *buf, uint32_t len)
 /* 90 rotation is 1+0j, 0+1j, -1+0j, 0-1j
