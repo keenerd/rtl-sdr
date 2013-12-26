@@ -448,6 +448,7 @@ int main(int argc, char **argv)
 		case 'P':
 			ppm_error = atoi(optarg);
 			custom_ppm = 1;
+			break;
 		default:
 			usage();
 			break;

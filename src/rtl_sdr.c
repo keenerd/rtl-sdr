@@ -129,13 +129,13 @@ int main(int argc, char **argv)
 			dev_given = 1;
 			break;
 		case 'f':
-			frequency = (uint32_t)atof(optarg);
+			frequency = (uint32_t)atofs(optarg);
 			break;
 		case 'g':
 			gain = (int)(atof(optarg) * 10); /* tenths of a dB */
 			break;
 		case 's':
-			samp_rate = (uint32_t)atof(optarg);
+			samp_rate = (uint32_t)atofs(optarg);
 			break;
 		case 'p':
 			ppm_error = atoi(optarg);
