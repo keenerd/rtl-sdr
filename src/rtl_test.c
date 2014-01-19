@@ -144,8 +144,8 @@ static void ppm_clock_init(void)
 	ppm_start.tv_sec = tv.tv_sec;
 	ppm_start.tv_nsec = tv.tv_usec*1000;
 #elif __unix__
-	clock_gettime(CLOCK_REALTIME, &ppm_recent);
-	clock_gettime(CLOCK_REALTIME, &ppm_start);
+	clock_gettime(CLOCK_MONOTONIC, &ppm_recent);
+	clock_gettime(CLOCK_MONOTONIC, &ppm_start);
 #endif
 }
 
@@ -166,7 +166,7 @@ static void ppm_test(uint32_t len)
 	ppm_count += (int64_t)len;
 #ifndef _WIN32
 	#ifndef __APPLE__
-	clock_gettime(CLOCK_REALTIME, &ppm_now);
+	clock_gettime(CLOCK_MONOTONIC, &ppm_now);
 	#else
 	gettimeofday(&tv, NULL);
 	ppm_now.tv_sec = tv.tv_sec;
@@ -178,7 +178,7 @@ static void ppm_test(uint32_t len)
 		printf("real sample rate: %i",
 		(int)((1000000000L * ppm_count / 2L) / ns));
 		#ifndef __APPLE__
-		clock_gettime(CLOCK_REALTIME, &ppm_recent);
+		clock_gettime(CLOCK_MONOTONIC, &ppm_recent);
 		#else
 		gettimeofday(&tv, NULL);
 		ppm_recent.tv_sec = tv.tv_sec;
