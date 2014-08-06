@@ -31,17 +31,14 @@
  * todo:
  *       sanity checks
  *       scale squelch to other input parameters
- *       test all the demodulations
  *       pad output on hop
  *       frequency ranges could be stored better
- *       scaled AM demod amplification
  *       auto-hop after time limit
  *       peak detector to tune onto stronger signals
  *       fifo for active hop frequency
  *       clips
  *       noise squelch
  *       merge stereo patch
- *       merge soft agc patch
  *       merge udp patch
  *       testmode to detect overruns
  *       watchdog to reset bad dongle
@@ -110,6 +107,17 @@ struct dongle_state
 	struct demod_state *demod_target;
 };
 
+struct agc_state
+{
+	int64_t gain_num;
+	int64_t gain_den;
+	int64_t gain_max;
+	int     gain_int;
+	int     peak_target;
+	int     attack_step;
+	int     decay_step;
+};
+
 struct demod_state
 {
 	int      exit_flag;
@@ -139,6 +147,8 @@ struct demod_state
 	int      now_lpr;
 	int      prev_lpr_index;
 	int      dc_block, dc_avg;
+	int      agc_enable;
+	struct   agc_state *agc;
 	void     (*mode_demod)(struct demod_state*);
 	pthread_rwlock_t rw;
 	pthread_cond_t ready;
@@ -203,6 +213,7 @@ void usage(void)
 		"\t    edge:   enable lower edge tuning\n"
 		"\t    dc:     enable dc blocking filter\n"
 		"\t    deemp:  enable de-emphasis filter\n"
+		"\t    swagc:  enable software agc (only for AM)\n"
 		"\t    direct: enable direct sampling\n"
 		"\t    no-mod: enable no-mod direct sampling\n"
 		"\t    offset: enable offset tuning\n"
@@ -750,9 +761,36 @@ void arbitrary_resample(int16_t *buf1, int16_t *buf2, int len1, int len2)
 	}
 }
 
+void software_agc(struct demod_state *d)
+/* ignores complex pairs, indirectly calculates power squelching */
+{
+	int i = 0;
+	int output;
+	struct agc_state *agc = d->agc;
+
+	for (i=0; i < d->result_len; i++) {
+		output = (int)((int64_t)d->result[i] * agc->gain_num / agc->gain_den);
+
+		if (abs(output) < agc->peak_target) {
+			agc->gain_num += agc->decay_step;
+		} else {
+			agc->gain_num -= agc->attack_step;
+		}
+
+		if (agc->gain_num < agc->gain_den) {
+			agc->gain_num = agc->gain_den;}
+		if (agc->gain_num > agc->gain_max) {
+			agc->gain_num = agc->gain_max;}
+
+		agc->gain_int = (int)(agc->gain_num / agc->gain_den);
+		d->result[i] = output;
+	}
+}
+
 void full_demod(struct demod_state *d)
 {
 	int i, ds_p;
+	int do_squelch = 0;
 	int sr = 0;
 	ds_p = d->downsample_passes;
 	if (ds_p) {
@@ -771,16 +809,26 @@ void full_demod(struct demod_state *d)
 	} else {
 		low_pass(d);
 	}
+	if (d->agc_enable) {
+		software_agc(d);
+		if(d->squelch_level && d->agc->gain_int > d->squelch_level) {
+			do_squelch = 1;}
 	/* power squelch */
-	if (d->squelch_level) {
+	} else if (d->squelch_level) {
 		sr = rms(d->lowpassed, d->lp_len, 1);
 		if (sr < d->squelch_level) {
-			d->squelch_hits++;
-			for (i=0; i<d->lp_len; i++) {
-				d->lowpassed[i] = 0;
-			}
-		} else {
-			d->squelch_hits = 0;}
+			do_squelch = 1;}
+	}
+	if (do_squelch) {
+		d->squelch_hits++;
+		for (i=0; i<d->lp_len; i++) {
+			d->lowpassed[i] = 0;
+		}
+	} else {
+		d->squelch_hits = 0;
+	}
+	if (d->squelch_level && d->squelch_hits > d->conseq_squelch) {
+		d->agc->gain_num = d->agc->gain_den;
 	}
 	d->mode_demod(d);  /* lowpassed -> result */
 	if (d->mode_demod == &raw_demod) {
@@ -986,6 +1034,7 @@ void demod_init(struct demod_state *s)
 	s->post_downsample = 1;  // once this works, default = 4
 	s->custom_atan = 0;
 	s->deemph = 0;
+	s->agc_enable = 0;
 	s->rate_out2 = -1;  // flag for disabled
 	s->mode_demod = &fm_demod;
 	s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
@@ -1057,6 +1106,24 @@ void sanity_checks(void)
 
 }
 
+int agc_init(struct demod_state *s)
+{
+	int i;
+	struct agc_state *agc;
+
+	agc = malloc(sizeof(struct agc_state));
+	s->agc = agc;
+
+	agc->gain_den = 1<<13;
+	agc->gain_num = agc->gain_den;
+	agc->gain_int = (int)(agc->gain_num / agc->gain_den);
+	agc->peak_target = 1<<13;
+	agc->gain_max = 1<<10 * agc->gain_num;
+	agc->attack_step = 2;
+	agc->decay_step = 1;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 #ifndef _WIN32
@@ -1067,6 +1134,7 @@ int main(int argc, char **argv)
 	int custom_ppm = 0;
 	dongle_init(&dongle);
 	demod_init(&demod);
+	agc_init(&demod);
 	output_init(&output);
 	controller_init(&controller);
 
@@ -1125,6 +1193,8 @@ int main(int argc, char **argv)
 				demod.dc_block = 1;}
 			if (strcmp("deemp",  optarg) == 0) {
 				demod.deemph = 1;}
+			if (strcmp("swagc",  optarg) == 0) {
+				demod.agc_enable = 1;}
 			if (strcmp("direct",  optarg) == 0) {
 				dongle.direct_sampling = 1;}
 			if (strcmp("no-mod",  optarg) == 0) {
