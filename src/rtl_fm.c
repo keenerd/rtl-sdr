@@ -165,6 +165,7 @@ struct output_state
 	int16_t  result[MAXIMUM_BUF_LENGTH];
 	int      result_len;
 	int      rate;
+	int      wav_format;
 	pthread_rwlock_t rw;
 	pthread_cond_t ready;
 	pthread_mutex_t ready_m;
@@ -217,6 +218,7 @@ void usage(void)
 		"\t    direct: enable direct sampling\n"
 		"\t    no-mod: enable no-mod direct sampling\n"
 		"\t    offset: enable offset tuning\n"
+		"\t    wav:    generate WAV header\n"
 		"\tfilename ('-' means stdout)\n"
 		"\t    omitting the filename also uses stdout\n\n"
 		"Experimental options:\n"
@@ -237,6 +239,7 @@ void usage(void)
 		"\trtl_fm ... | play -t raw -r 24k -es -b 16 -c 1 -V1 -\n"
 		"\t           | aplay -r 24k -f S16_LE -t raw -c 1\n"
 		"\t  -M wbfm  | play -r 32k ... \n"
+		"\t  -E wav   | play -t wav - \n"
 		"\t  -s 22050 | multimon -t raw /dev/stdin\n\n");
 	exit(1);
 }
@@ -1058,7 +1061,7 @@ void demod_cleanup(struct demod_state *s)
 
 void output_init(struct output_state *s)
 {
-	s->rate = DEFAULT_SAMPLE_RATE;
+	//s->rate = DEFAULT_SAMPLE_RATE;
 	pthread_rwlock_init(&s->rw, NULL);
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
@@ -1121,6 +1124,40 @@ int agc_init(struct demod_state *s)
 	agc->gain_max = 1<<10 * agc->gain_num;
 	agc->attack_step = 2;
 	agc->decay_step = 1;
+	return 0;
+}
+
+int generate_header(struct demod_state *d, struct output_state *o)
+{
+	int i, s_rate, b_rate;
+	char *channels = "\1\0";
+	char *align = "\2\0";
+	uint8_t samp_rate[4] = {0, 0, 0, 0};
+	uint8_t byte_rate[4] = {0, 0, 0, 0};
+	s_rate = o->rate;
+	b_rate = o->rate * 2;
+	if (d->mode_demod == &raw_demod) {
+		channels = "\2\0";
+		align = "\4\0";
+		b_rate *= 2;
+	}
+	for (i=0; i<4; i++) {
+		samp_rate[i] = (uint8_t)((s_rate >> (8*i)) & 0xFF);
+		byte_rate[i] = (uint8_t)((b_rate >> (8*i)) & 0xFF);
+	}
+	fwrite("RIFF",     1, 4, o->file);
+	fwrite("\xFF\xFF\xFF\xFF", 1, 4, o->file);  /* size */
+	fwrite("WAVE",     1, 4, o->file);
+	fwrite("fmt ",     1, 4, o->file);
+	fwrite("\x10\0\0\0", 1, 4, o->file);  /* size */
+	fwrite("\1\0",     1, 2, o->file);  /* pcm */
+	fwrite(channels,   1, 2, o->file);
+	fwrite(samp_rate,  1, 4, o->file);
+	fwrite(byte_rate,  1, 4, o->file);
+	fwrite(align, 1, 2, o->file);
+	fwrite("\x10\0",     1, 2, o->file);  /* bits per channel */
+	fwrite("data",     1, 4, o->file);
+	fwrite("\xFF\xFF\xFF\xFF", 1, 4, o->file);  /* size */
 	return 0;
 }
 
@@ -1201,6 +1238,8 @@ int main(int argc, char **argv)
 				dongle.direct_sampling = 3;}
 			if (strcmp("offset",  optarg) == 0) {
 				dongle.offset_tuning = 1;}
+			if (strcmp("wav",  optarg) == 0) {
+				output.wav_format = 1;}
 			break;
 		case 'F':
 			demod.downsample_passes = 1;  /* truthy placeholder */
@@ -1318,6 +1357,10 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Failed to open %s\n", output.filename);
 			exit(1);
 		}
+	}
+
+	if (output.wav_format) {
+		generate_header(&demod, &output);
 	}
 
 	//r = rtlsdr_set_testmode(dongle.dev, 1);
