@@ -699,6 +699,25 @@ int rms(int16_t *samples, int len, int step)
 	return (int)sqrt((p-err) / len);
 }
 
+int squelch_to_rms(int db, struct dongle_state *dongle, struct demod_state *demod)
+/* 0 dB = 1 rms at 50dB gain and 1024 downsample */
+{
+	double linear, gain, downsample;
+	if (db == 0) {
+		return 0;}
+	linear = pow(10.0, (double)db/20.0);
+	gain = 50.0;
+	if (dongle->gain != AUTO_GAIN) {
+		gain = (double)(dongle->gain) / 10.0;
+	}
+	gain = 50.0 - gain;
+	gain = pow(10.0, gain/20.0);
+	downsample = 1024.0 / (double)demod->downsample;
+	linear = linear / gain;
+	linear = linear / downsample;
+	return (int)linear + 1;
+}
+
 void arbitrary_upsample(int16_t *buf1, int16_t *buf2, int len1, int len2)
 /* linear interpolation, len1 < len2 */
 {
@@ -964,6 +983,7 @@ static void *controller_thread_fn(void *arg)
 
 	/* set up primary channel */
 	optimal_settings(s->freqs[0], demod.rate_in);
+	demod.squelch_level = squelch_to_rms(demod.squelch_level, &dongle, &demod);
 	if (dongle.direct_sampling) {
 		verbose_direct_sampling(dongle.dev, dongle.direct_sampling);}
 	if (dongle.offset_tuning) {
