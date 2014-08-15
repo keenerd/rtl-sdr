@@ -147,7 +147,7 @@ int main(int argc, char **argv)
 			out_block_size = (uint32_t)atof(optarg);
 			break;
 		case 'n':
-			bytes_to_read = (uint32_t)atof(optarg) * 2;
+			bytes_to_read = (uint32_t)atofs(optarg) * 2;
 			break;
 		case 'S':
 			sync_mode = 1;
