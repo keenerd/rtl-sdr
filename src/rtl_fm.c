@@ -51,6 +51,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __APPLE__
+#include <sys/time.h>
+#else
+#include <time.h>
+#endif
+
 #ifndef _WIN32
 #include <unistd.h>
 #else
@@ -166,6 +172,7 @@ struct output_state
 	int      result_len;
 	int      rate;
 	int      wav_format;
+	int      padded;
 	pthread_rwlock_t rw;
 	pthread_cond_t ready;
 	pthread_mutex_t ready_m;
@@ -214,11 +221,12 @@ void usage(void)
 		"\t    edge:   enable lower edge tuning\n"
 		"\t    dc:     enable dc blocking filter\n"
 		"\t    deemp:  enable de-emphasis filter\n"
-		"\t    swagc:  enable software agc (only for AM)\n"
+		"\t    swagc:  enable software agc (only for AM, broken)\n"
 		"\t    direct: enable direct sampling\n"
 		"\t    no-mod: enable no-mod direct sampling\n"
 		"\t    offset: enable offset tuning\n"
 		"\t    wav:    generate WAV header\n"
+		"\t    pad:    pad output with zeros (broken)\n"
 		"\tfilename ('-' means stdout)\n"
 		"\t    omitting the filename also uses stdout\n\n"
 		"Experimental options:\n"
@@ -929,15 +937,74 @@ static void *demod_thread_fn(void *arg)
 	return 0;
 }
 
+#ifndef _WIN32
+static int get_nanotime(struct timespec *ts)
+{
+	int rv = ENOSYS;
+#ifdef __unix__
+	rv = clock_gettime(CLOCK_MONOTONIC, ts);
+#elif __APPLE__
+	struct timeval tv;
+
+	rv = gettimeofday(&tv, NULL);
+	ts->tv_sec = tv.tv_sec;
+	ts->tv_nsec = tv.tv_usec * 1000;
+#endif
+	return rv;
+}
+#endif
+
 static void *output_thread_fn(void *arg)
 {
+	int r = 0;
 	struct output_state *s = arg;
+	//struct timespec abstime;
+	struct timespec start_time;
+	struct timespec now_time;
+	struct timespec fut_time;
+	int64_t interval, delay, samples, samples2, i;
+	samples = 0L;
+#ifndef _WIN32
+	get_nanotime(&start_time);
+#endif
 	while (!do_exit) {
-		// use timedwait and pad out under runs
-		safe_cond_wait(&s->ready, &s->ready_m);
-		pthread_rwlock_rdlock(&s->rw);
-		fwrite(s->result, 2, s->result_len, s->file);
-		pthread_rwlock_unlock(&s->rw);
+		if (!s->padded) {
+			safe_cond_wait(&s->ready, &s->ready_m);
+			pthread_rwlock_rdlock(&s->rw);
+			fwrite(s->result, 2, s->result_len, s->file);
+			pthread_rwlock_unlock(&s->rw);
+			continue;
+		}
+#ifndef _WIN32
+		/* padding requires output at constant rate */
+		/* figure out how to do this with windows HPET */
+		pthread_mutex_lock(&s->ready_m);
+		delay = 1000000000L * (int64_t)s->result_len / (int64_t)s->rate;
+		get_nanotime(&fut_time);
+		fut_time.tv_nsec += delay;
+		r = pthread_cond_timedwait(&s->ready, &s->ready_m, &fut_time);
+		pthread_mutex_unlock(&s->ready_m);
+		if (r != ETIMEDOUT) {
+			pthread_rwlock_rdlock(&s->rw);
+			fwrite(s->result, 2, s->result_len, s->file);
+			samples += s->result_len;
+			pthread_rwlock_unlock(&s->rw);
+			continue;
+		}
+		get_nanotime(&now_time);
+		interval = now_time.tv_sec - start_time.tv_sec;
+		interval *= 1000000000L;
+		interval += (now_time.tv_nsec - start_time.tv_nsec);
+		samples2 = interval * (int64_t)s->rate / 1000000000L;
+		samples2 -= samples;
+		//fprintf(stderr, "%lli %lli %lli\n", delay, interval, samples);
+		/* there must be a better way to write zeros */
+		for (i=0L; i<samples2; i++) {
+			fputc(0, s->file);
+			fputc(0, s->file);
+		}
+		samples += samples2;
+#endif
 	}
 	return 0;
 }
@@ -1260,6 +1327,8 @@ int main(int argc, char **argv)
 				dongle.offset_tuning = 1;}
 			if (strcmp("wav",  optarg) == 0) {
 				output.wav_format = 1;}
+			if (strcmp("pad",  optarg) == 0) {
+				output.padded = 1;}
 			break;
 		case 'F':
 			demod.downsample_passes = 1;  /* truthy placeholder */
