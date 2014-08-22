@@ -72,8 +72,9 @@
 #define AUTO_GAIN			-100
 #define BUFFER_DUMP			(1<<12)
 
-#define MAXIMUM_RATE			2400000
+#define MAXIMUM_RATE			3200000
 #define MINIMUM_RATE			1000000
+int target_rate =			2400000;
 
 static volatile int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
@@ -158,6 +159,8 @@ void usage(void)
 		"\t  enables low-leakage downsample filter,\n"
 		"\t  fir_size can be 0 or 9.  0 has bad roll off,\n"
 		"\t  try -F 0 with '-c 50%%' to hide the roll off\n"
+		"\t[-r max_sample_rate (default: 2.4M)]\n"
+		"\t  possible values are 2M to 3.2M\n"
 		"\t[-P enables peak hold (default: off)]\n"
 		"\t[-D direct_sampling_mode, 0 (default/off), 1 (I), 2 (Q), 3 (no-mod)]\n"
 		"\t[-O enable offset tuning (default: off)]\n"
@@ -496,7 +499,7 @@ int solve_downsample(struct channel_solve *c, int boxcar)
 		} else {
 			ds_next = c->downsample * 2;
 		}
-		if ((bw * ds_next) > MAXIMUM_RATE) {
+		if ((bw * ds_next) > target_rate) {
 			break;}
 
 		c->downsample = ds_next;
@@ -511,7 +514,7 @@ int solve_hopping(struct channel_solve *c)
 {
 	int i, scan_size, bins_all, bins_crop, bins_2;
 	scan_size = c->upper - c->lower;
-	/* evenly sized ranges, as close to MAXIMUM_RATE as possible */
+	/* evenly sized ranges, as close to target_rate as possible */
 	for (i=1; i<MAX_TUNES; i++) {
 		c->bw_wanted = scan_size / i;
 		bins_all = scan_size / c->bin_spec;
@@ -520,7 +523,7 @@ int solve_hopping(struct channel_solve *c)
 		bins_2 = 1 << c->bin_e;
 		c->bw_needed = bins_2 * c->bin_spec;
 		c->crop_tmp = (double)(bins_2 - bins_crop) / (double)bins_2;
-		if (c->bw_needed > MAXIMUM_RATE) {
+		if (c->bw_needed > target_rate) {
 			continue;}
 		if (c->crop_tmp < c->crop) {
 			continue;}
@@ -877,7 +880,7 @@ int main(int argc, char **argv)
 	double (*window_fn)(int, int) = rectangle;
 	freq_optarg = "";
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1PD:Oh")) != -1) {
+	while ((opt = getopt(argc, argv, "f:i:s:r:t:d:g:p:e:w:c:F:1PD:Oh")) != -1) {
 		switch (opt) {
 		case 'f': // lower:upper:bin_size
 			freq_optarg = strdup(optarg);
@@ -930,6 +933,9 @@ int main(int argc, char **argv)
 			ppm_error = atoi(optarg);
 			custom_ppm = 1;
 			break;
+		case 'r':
+			target_rate = (int)atofs(optarg);
+			break;
 		case '1':
 			single = 1;
 			break;
@@ -961,6 +967,13 @@ int main(int argc, char **argv)
 	if ((crop < 0.0) || (crop > 1.0)) {
 		fprintf(stderr, "Crop value outside of 0 to 1.\n");
 		exit(1);
+	}
+
+	if (target_rate < 2 * MINIMUM_RATE) {
+		target_rate = 2 * MINIMUM_RATE;
+	}
+	if (target_rate > MAXIMUM_RATE) {
+		target_rate = MAXIMUM_RATE;
 	}
 
 	frequency_range(freq_optarg, crop, boxcar);
