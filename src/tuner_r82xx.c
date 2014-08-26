@@ -344,7 +344,7 @@ static int r82xx_write_batch_sync(struct r82xx_priv *priv)
 		return -1;
 	priv->reg_batch = 0;
 	if (priv->reg_low > priv->reg_high)
-		return -1;
+		return 0; /* No work to do */
 	offset = priv->reg_low - REG_SHADOW_START;
 	len = priv->reg_high - priv->reg_low + 1;
 	rc = r82xx_write(priv, priv->reg_low, priv->regs+offset, len);
