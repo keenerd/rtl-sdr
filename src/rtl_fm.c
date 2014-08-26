@@ -104,7 +104,7 @@ struct dongle_state
 	uint32_t freq;
 	uint32_t rate;
 	int      gain;
-	uint16_t buf16[MAXIMUM_BUF_LENGTH];
+	int16_t  buf16[MAXIMUM_BUF_LENGTH];
 	uint32_t buf_len;
 	int      ppm_error;
 	int      offset_tuning;
@@ -132,10 +132,8 @@ struct demod_state
 	int      lp_len;
 	int16_t  lp_i_hist[10][6];
 	int16_t  lp_q_hist[10][6];
-	int16_t  result[MAXIMUM_BUF_LENGTH];
 	int16_t  droop_i_hist[9];
 	int16_t  droop_q_hist[9];
-	int      result_len;
 	int      rate_in;
 	int      rate_out;
 	int      rate_out2;
@@ -364,22 +362,23 @@ void low_pass_real(struct demod_state *s)
 /* simple square window FIR */
 // add support for upsampling?
 {
+	int16_t *lp = s->lowpassed;
 	int i=0, i2=0;
 	int fast = (int)s->rate_out;
 	int slow = s->rate_out2;
-	while (i < s->result_len) {
-		s->now_lpr += s->result[i];
+	while (i < s->lp_len) {
+		s->now_lpr += lp[i];
 		i++;
 		s->prev_lpr_index += slow;
 		if (s->prev_lpr_index < fast) {
 			continue;
 		}
-		s->result[i2] = (int16_t)(s->now_lpr / (fast/slow));
+		lp[i2] = (int16_t)(s->now_lpr / (fast/slow));
 		s->prev_lpr_index -= fast;
 		s->now_lpr = 0;
 		i2 += 1;
 	}
-	s->result_len = i2;
+	s->lp_len = i2;
 }
 
 void fifth_order(int16_t *data, int length, int16_t *hist)
@@ -557,35 +556,32 @@ int esbensen(int ar, int aj, int br, int bj)
 
 void fm_demod(struct demod_state *fm)
 {
-	int i, pcm;
+	int i, pcm = 0;
 	int16_t *lp = fm->lowpassed;
-	pcm = polar_discriminant(lp[0], lp[1],
-		fm->pre_r, fm->pre_j);
-	fm->result[0] = (int16_t)pcm;
-	for (i = 2; i < (fm->lp_len-1); i += 2) {
+        int16_t pr = fm->pre_r;
+	int16_t pj = fm->pre_j;
+	for (i = 0; i < (fm->lp_len-1); i += 2) {
 		switch (fm->custom_atan) {
 		case 0:
-			pcm = polar_discriminant(lp[i], lp[i+1],
-				lp[i-2], lp[i-1]);
+			pcm = polar_discriminant(lp[i], lp[i+1], pr, pj);
 			break;
 		case 1:
-			pcm = polar_disc_fast(lp[i], lp[i+1],
-				lp[i-2], lp[i-1]);
+			pcm = polar_disc_fast(lp[i], lp[i+1], pr, pj);
 			break;
 		case 2:
-			pcm = polar_disc_lut(lp[i], lp[i+1],
-				lp[i-2], lp[i-1]);
+			pcm = polar_disc_lut(lp[i], lp[i+1], pr, pj);
 			break;
 		case 3:
-			pcm = esbensen(lp[i], lp[i+1],
-				lp[i-2], lp[i-1]);
+			pcm = esbensen(lp[i], lp[i+1], pr, pj);
 			break;
 		}
-		fm->result[i/2] = (int16_t)pcm;
+		pr = lp[i];
+		pj = lp[i+1];
+		fm->lowpassed[i/2] = (int16_t)pcm;
 	}
-	fm->pre_r = lp[fm->lp_len - 2];
-	fm->pre_j = lp[fm->lp_len - 1];
-	fm->result_len = fm->lp_len/2;
+	fm->pre_r = pr;
+	fm->pre_j = pj;
+	fm->lp_len = fm->lp_len / 2;
 }
 
 void am_demod(struct demod_state *fm)
@@ -593,15 +589,14 @@ void am_demod(struct demod_state *fm)
 {
 	int i, pcm;
 	int16_t *lp = fm->lowpassed;
-	int16_t *r  = fm->result;
 	for (i = 0; i < fm->lp_len; i += 2) {
 		// hypot uses floats but won't overflow
 		//r[i/2] = (int16_t)hypot(lp[i], lp[i+1]);
 		pcm = lp[i] * lp[i];
 		pcm += lp[i+1] * lp[i+1];
-		r[i/2] = (int16_t)sqrt(pcm) * fm->output_scale;
+		lp[i/2] = (int16_t)sqrt(pcm) * fm->output_scale;
 	}
-	fm->result_len = fm->lp_len/2;
+	fm->lp_len = fm->lp_len / 2;
 	// lowpass? (3khz)  highpass?  (dc)
 }
 
@@ -609,49 +604,44 @@ void usb_demod(struct demod_state *fm)
 {
 	int i, pcm;
 	int16_t *lp = fm->lowpassed;
-	int16_t *r  = fm->result;
 	for (i = 0; i < fm->lp_len; i += 2) {
 		pcm = lp[i] + lp[i+1];
-		r[i/2] = (int16_t)pcm * fm->output_scale;
+		lp[i/2] = (int16_t)pcm * fm->output_scale;
 	}
-	fm->result_len = fm->lp_len/2;
+	fm->lp_len = fm->lp_len / 2;
 }
 
 void lsb_demod(struct demod_state *fm)
 {
 	int i, pcm;
 	int16_t *lp = fm->lowpassed;
-	int16_t *r  = fm->result;
 	for (i = 0; i < fm->lp_len; i += 2) {
 		pcm = lp[i] - lp[i+1];
-		r[i/2] = (int16_t)pcm * fm->output_scale;
+		lp[i/2] = (int16_t)pcm * fm->output_scale;
 	}
-	fm->result_len = fm->lp_len/2;
+	fm->lp_len = fm->lp_len / 2;
 }
 
 void raw_demod(struct demod_state *fm)
 {
-	int i;
-	for (i = 0; i < fm->lp_len; i++) {
-		fm->result[i] = (int16_t)fm->lowpassed[i];
-	}
-	fm->result_len = fm->lp_len;
+	return;
 }
 
 void deemph_filter(struct demod_state *fm)
 {
-	static int avg;  // cheating...
+	static int avg;  // cheating, not threadsafe
 	int i, d;
+	int16_t *lp = fm->lowpassed;
 	// de-emph IIR
 	// avg = avg * (1 - alpha) + sample * alpha;
-	for (i = 0; i < fm->result_len; i++) {
-		d = fm->result[i] - avg;
+	for (i = 0; i < fm->lp_len; i++) {
+		d = lp[i] - avg;
 		if (d > 0) {
 			avg += (d + fm->deemph_a/2) / fm->deemph_a;
 		} else {
 			avg += (d - fm->deemph_a/2) / fm->deemph_a;
 		}
-		fm->result[i] = (int16_t)avg;
+		lp[i] = (int16_t)avg;
 	}
 }
 
@@ -659,13 +649,14 @@ void dc_block_filter(struct demod_state *fm)
 {
 	int i, avg;
 	int64_t sum = 0;
-	for (i=0; i < fm->result_len; i++) {
-		sum += fm->result[i];
+	int16_t *lp = fm->lowpassed;
+	for (i=0; i < fm->lp_len; i++) {
+		sum += lp[i];
 	}
-	avg = sum / fm->result_len;
+	avg = sum / fm->lp_len;
 	avg = (avg + fm->dc_avg * 9) / 10;
-	for (i=0; i < fm->result_len; i++) {
-		fm->result[i] -= avg;
+	for (i=0; i < fm->lp_len; i++) {
+		lp[i] -= avg;
 	}
 	fm->dc_avg = avg;
 }
@@ -797,9 +788,10 @@ void software_agc(struct demod_state *d)
 	int i = 0;
 	int output;
 	struct agc_state *agc = d->agc;
+	int16_t *lp = d->lowpassed;
 
-	for (i=0; i < d->result_len; i++) {
-		output = (int)((int64_t)d->result[i] * agc->gain_num / agc->gain_den);
+	for (i=0; i < d->lp_len; i++) {
+		output = (int)((int64_t)lp[i] * agc->gain_num / agc->gain_den);
 
 		if (abs(output) < agc->peak_target) {
 			agc->gain_num += agc->decay_step;
@@ -813,7 +805,7 @@ void software_agc(struct demod_state *d)
 			agc->gain_num = agc->gain_max;}
 
 		agc->gain_int = (int)(agc->gain_num / agc->gain_den);
-		d->result[i] = output;
+		lp[i] = output;
 	}
 }
 
@@ -860,21 +852,21 @@ void full_demod(struct demod_state *d)
 	if (d->squelch_level && d->squelch_hits > d->conseq_squelch) {
 		d->agc->gain_num = d->agc->gain_den;
 	}
-	d->mode_demod(d);  /* lowpassed -> result */
+	d->mode_demod(d);  /* lowpassed -> lowpassed */
 	if (d->mode_demod == &raw_demod) {
 		return;
 	}
 	/* todo, fm noise squelch */
 	// use nicer filter here too?
 	if (d->post_downsample > 1) {
-		d->result_len = low_pass_simple(d->result, d->result_len, d->post_downsample);}
+		d->lp_len = low_pass_simple(d->lowpassed, d->lp_len, d->post_downsample);}
 	if (d->deemph) {
 		deemph_filter(d);}
 	if (d->dc_block) {
 		dc_block_filter(d);}
 	if (d->rate_out2 > 0) {
 		low_pass_real(d);
-		//arbitrary_resample(d->result, d->result, d->result_len, d->result_len * d->rate_out2 / d->rate_out);
+		//arbitrary_resample(d->lowpassed, d->lowpassed, d->lp_len, d->lp_len * d->rate_out2 / d->rate_out);
 	}
 }
 
@@ -929,8 +921,8 @@ static void *demod_thread_fn(void *arg)
 			continue;
 		}
 		pthread_rwlock_wrlock(&o->rw);
-		memcpy(o->result, d->result, 2*d->result_len);
-		o->result_len = d->result_len;
+		memcpy(o->result, d->lowpassed, 2*d->lp_len);
+		o->result_len = d->lp_len;
 		pthread_rwlock_unlock(&o->rw);
 		safe_cond_signal(&o->ready, &o->ready_m);
 	}
