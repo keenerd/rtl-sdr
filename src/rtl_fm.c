@@ -95,6 +95,11 @@ static int *atan_lut = NULL;
 static int atan_lut_size = 131072; /* 512 KB */
 static int atan_lut_coef = 8;
 
+// rewrite as dynamic and thread-safe for multi demod/dongle
+#define SHARED_SIZE 4
+int16_t shared_samples[SHARED_SIZE][MAXIMUM_BUF_LENGTH];
+int ss_busy[SHARED_SIZE] = {0};
+
 struct dongle_state
 {
 	int      exit_flag;
@@ -104,7 +109,7 @@ struct dongle_state
 	uint32_t freq;
 	uint32_t rate;
 	int      gain;
-	int16_t  buf16[MAXIMUM_BUF_LENGTH];
+	int16_t  *buf16;
 	uint32_t buf_len;
 	int      ppm_error;
 	int      offset_tuning;
@@ -128,7 +133,7 @@ struct demod_state
 {
 	int      exit_flag;
 	pthread_t thread;
-	int16_t  lowpassed[MAXIMUM_BUF_LENGTH];
+	int16_t  *lowpassed;
 	int      lp_len;
 	int16_t  lp_i_hist[10][6];
 	int16_t  lp_q_hist[10][6];
@@ -166,7 +171,7 @@ struct output_state
 	pthread_t thread;
 	FILE     *file;
 	char     *filename;
-	int16_t  result[MAXIMUM_BUF_LENGTH];
+	int16_t  *result;
 	int      result_len;
 	int      rate;
 	int      wav_format;
@@ -870,6 +875,31 @@ void full_demod(struct demod_state *d)
 	}
 }
 
+int16_t* mark_shared_buffer(void)
+{
+	int i = 0;
+	while (1) {
+		i = (i+1) % SHARED_SIZE;
+		if (ss_busy[i] == 0) {
+			ss_busy[i] = 1;
+			return shared_samples[i];
+		}
+	}
+	return NULL;
+}
+
+int unmark_shared_buffer(int16_t *buf)
+{
+	int i;
+	for (i=0; i<SHARED_SIZE; i++) {
+		if (shared_samples[i] == buf) {
+			ss_busy[i] = 0;
+			return 0;
+		}
+	}
+	return 1;
+}
+
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	int i;
@@ -890,10 +920,11 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 	for (i=0; i<(int)len; i++) {
 		s->buf16[i] = (int16_t)buf[i] - 127;}
 	pthread_rwlock_wrlock(&d->rw);
-	memcpy(d->lowpassed, s->buf16, 2*len);
+	d->lowpassed = s->buf16;
 	d->lp_len = len;
 	pthread_rwlock_unlock(&d->rw);
 	safe_cond_signal(&d->ready, &d->ready_m);
+	s->buf16 = mark_shared_buffer();
 }
 
 static void *dongle_thread_fn(void *arg)
@@ -916,12 +947,13 @@ static void *demod_thread_fn(void *arg)
 			do_exit = 1;
 		}
 		if (d->squelch_level && d->squelch_hits > d->conseq_squelch) {
+			unmark_shared_buffer(d->lowpassed);
 			d->squelch_hits = d->conseq_squelch + 1;  /* hair trigger */
 			safe_cond_signal(&controller.hop, &controller.hop_m);
 			continue;
 		}
 		pthread_rwlock_wrlock(&o->rw);
-		memcpy(o->result, d->lowpassed, 2*d->lp_len);
+		o->result = d->lowpassed;
 		o->result_len = d->lp_len;
 		pthread_rwlock_unlock(&o->rw);
 		safe_cond_signal(&o->ready, &o->ready_m);
@@ -964,6 +996,7 @@ static void *output_thread_fn(void *arg)
 			safe_cond_wait(&s->ready, &s->ready_m);
 			pthread_rwlock_rdlock(&s->rw);
 			fwrite(s->result, 2, s->result_len, s->file);
+			unmark_shared_buffer(s->result);
 			pthread_rwlock_unlock(&s->rw);
 			continue;
 		}
@@ -979,6 +1012,7 @@ static void *output_thread_fn(void *arg)
 		if (r != ETIMEDOUT) {
 			pthread_rwlock_rdlock(&s->rw);
 			fwrite(s->result, 2, s->result_len, s->file);
+			unmark_shared_buffer(s->result);
 			samples += s->result_len;
 			pthread_rwlock_unlock(&s->rw);
 			continue;
@@ -1100,6 +1134,7 @@ void dongle_init(struct dongle_state *s)
 	s->direct_sampling = 0;
 	s->offset_tuning = 0;
 	s->demod_target = &demod;
+	s->buf16 = mark_shared_buffer();
 }
 
 void demod_init(struct demod_state *s)
@@ -1129,6 +1164,7 @@ void demod_init(struct demod_state *s)
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
 	s->output_target = &output;
+	s->lowpassed = NULL;
 }
 
 void demod_cleanup(struct demod_state *s)
@@ -1144,6 +1180,7 @@ void output_init(struct output_state *s)
 	pthread_rwlock_init(&s->rw, NULL);
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
+	s->result = NULL;
 }
 
 void output_cleanup(struct output_state *s)
