@@ -514,8 +514,7 @@ int solve_giant_bins(struct channel_solve *c)
 
 int solve_downsample(struct channel_solve *c, int target_rate, int boxcar)
 {
-	int scan_size, bins_wanted, bins_needed, ds_next;
-	double bw;
+	int scan_size, bins_wanted, bins_needed, ds_next, bw;
 
 	scan_size = c->upper - c->lower;
 	c->hops = 1;
@@ -531,16 +530,18 @@ int solve_downsample(struct channel_solve *c, int target_rate, int boxcar)
 		c->bin_e++;
 	}
 
+	c->downsample = 1;
+	c->downsample_passes = 0;
 	while (1) {
-		bw = (double)scan_size / (1.0 - c->crop_tmp);
-		c->bw_needed = (int)bw * c->downsample;
+		bw = (int)((double)scan_size / (1.0 - c->crop_tmp));
+		c->bw_needed = bw * c->downsample;
 
 		if (boxcar) {
 			ds_next = c->downsample + 1;
 		} else {
 			ds_next = c->downsample * 2;
 		}
-		if (((int)bw * ds_next) > target_rate) {
+		if ((bw * ds_next) > target_rate) {
 			break;}
 
 		c->downsample = ds_next;
@@ -677,7 +678,7 @@ void frequency_range(char *arg, struct misc_settings *ms)
 		logged_bins += hop_bins;
 		ts->crop_i1 = (length - hop_bins) / 2;
 		ts->crop_i2 = ts->crop_i1 + hop_bins - 1;
-		ts->freq = (lower_edge - ts->crop_i1 * c.bin_spec) + c.bw_needed/2;
+		ts->freq = (lower_edge - ts->crop_i1 * c.bin_spec) + c.bw_needed/(2*c.downsample);
 		/* prep for next hop */
 		lower_edge = ts->freq_high;
 	}
