@@ -296,6 +296,7 @@ void tuner_benchmark(void)
 					band_start = current;
 					report_band_start(band_start);
 					low_bound = current;
+					current = band_start + max_step(band_start);
 					state = FIND_END;
 				} else {
 					/* binary search */
@@ -307,8 +308,9 @@ void tuner_benchmark(void)
 				/* current < bandstart <= high_bound */
 				if (high_bound - current <= min_step(current)) {
 					/* start found at high_bound */
-					current = low_bound = band_start = high_bound;
+					low_bound = band_start = high_bound;
 					report_band_start(band_start);
+					current = band_start + max_step(band_start);
 					state = FIND_END;
 				} else {
 					/* binary search */
@@ -342,6 +344,7 @@ void tuner_benchmark(void)
 					/* band ends at low_bound */
 					report_band(band_start, low_bound);
 					low_bound = current;
+					current = low_bound + max_step(low_bound);
 					state = FIND_START;
 				} else {
 					/* binary search */
@@ -354,7 +357,8 @@ void tuner_benchmark(void)
 				if (high_bound - current <= min_step(current)) {
 					/* band ends at high_bound */
 					report_band(band_start, current);
-					current = low_bound = high_bound;
+					low_bound = high_bound;
+					current = low_bound + max_step(low_bound);
 					state = FIND_START;
 				} else {
 					/* binary search */
