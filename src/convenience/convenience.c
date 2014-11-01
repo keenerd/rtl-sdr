@@ -275,7 +275,7 @@ int verbose_device_search(char *s)
 {
 	int i, device_count, device, offset;
 	char *s2;
-	char vendor[256], product[256], serial[256];
+	char vendor[256] = {0}, product[256] = {0}, serial[256] = {0};
 	device_count = rtlsdr_get_device_count();
 	if (!device_count) {
 		fprintf(stderr, "No supported devices found.\n");
@@ -283,8 +283,11 @@ int verbose_device_search(char *s)
 	}
 	fprintf(stderr, "Found %d device(s):\n", device_count);
 	for (i = 0; i < device_count; i++) {
-		rtlsdr_get_device_usb_strings(i, vendor, product, serial);
-		fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
+		if (rtlsdr_get_device_usb_strings(i, vendor, product, serial) == 0) {
+			fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
+		} else {
+			fprintf(stderr, "  %d:  %s\n", i, "Failed to query data");
+		}
 	}
 	fprintf(stderr, "\n");
 	/* does string look like raw id number */
