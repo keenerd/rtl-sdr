@@ -258,11 +258,11 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 
 /* smallest band or band gap that tuner_benchmark() will notice */
 static uint32_t max_step(uint32_t freq) {
-	if (freq < 1e6)
-		return 1e4;
-	if (freq > 1e8)
-		return 1e6;
-	return freq / 1e2;
+	if (freq < 1000000U)
+		return 10000U;
+	if (freq > 100000000U)
+		return 1000000U;
+	return freq / 100U;
 }
 
 /* precision with which tuner_benchmark() will measure the edges of bands */
