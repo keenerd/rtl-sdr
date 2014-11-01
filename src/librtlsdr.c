@@ -1853,7 +1853,7 @@ int rtlsdr_read_async(rtlsdr_dev_t *dev, rtlsdr_read_async_cb_t cb, void *ctx,
 
 		r = libusb_submit_transfer(dev->xfer[i]);
 		if (r < 0) {
-			fprintf(stderr, "Failed to submit transfer %i!\n", i);
+			fprintf(stderr, "Failed to submit transfer %u!\n", i);
 			dev->async_status = RTLSDR_CANCELING;
 			break;
 		}

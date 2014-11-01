@@ -448,7 +448,7 @@ int main(int argc, char **argv)
 	verbose_reset_buffer(dev);
 
 	if ((test_mode == PPM_BENCHMARK) && !sync_mode) {
-		fprintf(stderr, "Reporting PPM error measurement every %i seconds...\n", ppm_duration);
+		fprintf(stderr, "Reporting PPM error measurement every %u seconds...\n", ppm_duration);
 		fprintf(stderr, "Press ^C after a few minutes.\n");
 	}
 
