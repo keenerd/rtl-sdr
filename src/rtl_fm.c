@@ -1401,7 +1401,6 @@ void sanity_checks(void)
 
 int agc_init(struct demod_state *s)
 {
-	int i;
 	struct agc_state *agc;
 
 	agc = malloc(sizeof(struct agc_state));

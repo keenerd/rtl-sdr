@@ -830,7 +830,7 @@ int64_t real_conj(int16_t real, int16_t imag)
 
 void scanner(void)
 {
-	int i, j, j2, f, g, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
+	int i, j, j2, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
 	int32_t w;
 	struct tuning_state *ts;
 	int16_t *fft_buf;
@@ -912,12 +912,11 @@ void scanner(void)
 
 void csv_dbm(struct tuning_state *ts)
 {
-	int i, len, ds;
+	int i, len;
 	int64_t tmp;
 	double dbm;
 	char *sep = ", ";
 	len = 1 << ts->bin_e;
-	ds = ts->downsample;
 	/* fix FFT stuff quirks */
 	if (ts->bin_e > 0) {
 		/* nuke DC component (not effective for all windows) */
@@ -972,7 +971,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact;
 #endif
 	char *filename = NULL;
-	int i, r, opt, wb_mode = 0;
+	int i, r, opt;
 	int f_set = 0;
 	int dev_index = 0;
 	int dev_given = 0;
