@@ -1075,7 +1075,7 @@ int r82xx_set_gain(struct r82xx_priv *priv, int set_manual_gain, int gain)
 
 int r82xx_set_freq(struct r82xx_priv *priv, uint32_t freq)
 {
-	int rc = -1;
+	int rc;
 	uint32_t lo_freq = freq + priv->int_freq;
 	uint8_t air_cable1_in;
 
@@ -1112,7 +1112,7 @@ err:
 
 int r82xx_set_nomod(struct r82xx_priv *priv)
 {
-	int rc = -1;
+	int rc;
 
 	fprintf(stderr, "Using R820T no-mod direct sampling mode\n");
 
