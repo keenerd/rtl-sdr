@@ -755,7 +755,7 @@ void dc_block_filter(struct demod_state *fm)
 	for (i=0; i < fm->lp_len; i++) {
 		sum += lp[i];
 	}
-	avg = sum / fm->lp_len;
+	avg = (int)(sum / fm->lp_len);
 	avg = (avg + fm->dc_avg * 9) / 10;
 	for (i=0; i < fm->lp_len; i++) {
 		lp[i] -= avg;

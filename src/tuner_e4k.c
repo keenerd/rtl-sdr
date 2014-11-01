@@ -443,7 +443,7 @@ static uint32_t compute_flo(uint32_t f_osc, uint8_t z, uint16_t x, uint8_t r)
 	if (fvco == 0)
 		return -EINVAL;
 
-	return fvco / r;
+	return (uint32_t)(fvco / r);
 }
 
 static int e4k_band_set(struct e4k_state *e4k, enum e4k_band band)
@@ -482,11 +482,11 @@ uint32_t e4k_compute_pll_params(struct e4k_pll_params *oscp, uint32_t fosc, uint
 {
 	uint32_t i;
 	uint8_t r = 2;
+	uint8_t z = 0;
+	uint8_t three_phase_mixing = 0;
 	uint64_t intended_fvco, remainder;
-	uint64_t z = 0;
 	uint32_t x;
-	int flo;
-	int three_phase_mixing = 0;
+	uint32_t flo;
 	oscp->r_idx = 0;
 
 	if (!is_fosc_valid(fosc))
@@ -507,13 +507,13 @@ uint32_t e4k_compute_pll_params(struct e4k_pll_params *oscp, uint32_t fosc, uint
 	intended_fvco = (uint64_t)intended_flo * r;
 
 	/* compute integral component of multiplier */
-	z = intended_fvco / fosc;
+	z = (uint8_t)(intended_fvco / fosc);
 
 	/* compute fractional part.  this will not overflow,
 	* as fosc(max) = 30MHz and z(max) = 255 */
 	remainder = intended_fvco - (fosc * z);
 	/* remainder(max) = 30MHz, E4K_PLL_Y = 65536 -> 64bit! */
-	x = (remainder * E4K_PLL_Y) / fosc;
+	x = (uint32_t)((remainder * E4K_PLL_Y) / fosc);
 	/* x(max) as result of this computation is 65536 */
 
 	flo = compute_flo(fosc, z, x, r);
