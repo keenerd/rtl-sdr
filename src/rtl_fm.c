@@ -252,9 +252,7 @@ void usage(void)
 		"\t    no-mod: enable no-mod direct sampling\n"
 		"\t    offset: enable offset tuning\n"
 		"\t    wav:    generate WAV header\n"
-#ifndef _WIN32
 		"\t    pad:    pad output gaps with zeros\n"
-#endif
 		"\t    lrmix:  one channel goes to left audio, one to right (broken)\n"
 		"\t            remember to enable stereo (-c 2) in sox\n"
 		"\tfilename ('-' means stdout)\n"
@@ -1040,11 +1038,18 @@ static void *output_thread_fn(void *arg)
 	struct output_state *s = arg;
 	struct buffer_bucket *b0 = &s->results[0];
 	struct buffer_bucket *b1 = &s->results[1];
+	int64_t i, duration, samples = 0LL, samples_now;
+#ifdef _WIN32
+	LARGE_INTEGER perfFrequency;
+	LARGE_INTEGER start_time;
+	LARGE_INTEGER now_time;
+
+	QueryPerformanceFrequency(&perfFrequency);
+	QueryPerformanceCounter(&start_time);
+#else
 	struct timespec start_time;
 	struct timespec now_time;
-	int64_t i, duration, samples, samples_now;
-	samples = 0L;
-#ifndef _WIN32
+
 	get_nanotime(&start_time);
 #endif
 	while (!do_exit) {
@@ -1071,10 +1076,9 @@ static void *output_thread_fn(void *arg)
 			pthread_rwlock_unlock(&b0->rw);
 			continue;
 		}
-#ifndef _WIN32
+
 		/* padding requires output at constant rate */
 		/* pthread_cond_timedwait is terrible, roll our own trycond */
-		// figure out how to do this with windows HPET
 		usleep(2000);
 		pthread_mutex_lock(&b0->trycond_m);
 		r = b0->trycond;
@@ -1088,11 +1092,17 @@ static void *output_thread_fn(void *arg)
 			pthread_rwlock_unlock(&b0->rw);
 			continue;
 		}
+#ifdef _WIN32
+		QueryPerformanceCounter(&now_time);
+		duration = now_time.QuadPart - start_time.QuadPart;
+		samples_now = (duration * s->rate) / perfFrequency.QuadPart;
+#else
 		get_nanotime(&now_time);
 		duration = now_time.tv_sec - start_time.tv_sec;
 		duration *= 1000000000L;
 		duration += (now_time.tv_nsec - start_time.tv_nsec);
-		samples_now = (duration * (int64_t)s->rate) / 1000000000L;
+		samples_now = (duration * s->rate) / 1000000000UL;
+#endif
 		if (samples_now < samples) {
 			continue;}
 		for (i=samples; i<samples_now; i++) {
@@ -1100,7 +1110,6 @@ static void *output_thread_fn(void *arg)
 			fputc(0, s->file);
 		}
 		samples = samples_now;
-#endif
 	}
 	return 0;
 }
