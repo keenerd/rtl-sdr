@@ -110,11 +110,7 @@ int gettimeofday(struct timeval *tv, void* ignored)
 		tmp <<= 32;
 		tmp |= ft.dwLowDateTime;
 		tmp /= 10;
-#ifdef _MSC_VER
-		tmp -= 11644473600000000Ui64;
-#else
 		tmp -= 11644473600000000ULL;
-#endif
 		tv->tv_sec = (long)(tmp / 1000000UL);
 		tv->tv_usec = (long)(tmp % 1000000UL);
 	}
@@ -303,23 +299,23 @@ static void *command_worker(void *arg)
 		}
 		switch(cmd.cmd) {
 		case 0x01:
-			printf("set freq %d\n", ntohl(cmd.param));
+			printf("set freq %u\n", ntohl(cmd.param));
 			rtlsdr_set_center_freq(dev,ntohl(cmd.param));
 			break;
 		case 0x02:
-			printf("set sample rate %d\n", ntohl(cmd.param));
+			printf("set sample rate %u\n", ntohl(cmd.param));
 			rtlsdr_set_sample_rate(dev, ntohl(cmd.param));
 			break;
 		case 0x03:
-			printf("set gain mode %d\n", ntohl(cmd.param));
+			printf("set gain mode %u\n", ntohl(cmd.param));
 			rtlsdr_set_tuner_gain_mode(dev, ntohl(cmd.param));
 			break;
 		case 0x04:
-			printf("set gain %d\n", ntohl(cmd.param));
+			printf("set gain %u\n", ntohl(cmd.param));
 			rtlsdr_set_tuner_gain(dev, ntohl(cmd.param));
 			break;
 		case 0x05:
-			printf("set freq correction %d\n", ntohl(cmd.param));
+			printf("set freq correction %u\n", ntohl(cmd.param));
 			rtlsdr_set_freq_correction(dev, ntohl(cmd.param));
 			break;
 		case 0x06:
@@ -328,31 +324,31 @@ static void *command_worker(void *arg)
 			rtlsdr_set_tuner_if_gain(dev, tmp >> 16, (short)(tmp & 0xffff));
 			break;
 		case 0x07:
-			printf("set test mode %d\n", ntohl(cmd.param));
+			printf("set test mode %u\n", ntohl(cmd.param));
 			rtlsdr_set_testmode(dev, ntohl(cmd.param));
 			break;
 		case 0x08:
-			printf("set agc mode %d\n", ntohl(cmd.param));
+			printf("set agc mode %u\n", ntohl(cmd.param));
 			rtlsdr_set_agc_mode(dev, ntohl(cmd.param));
 			break;
 		case 0x09:
-			printf("set direct sampling %d\n", ntohl(cmd.param));
+			printf("set direct sampling %u\n", ntohl(cmd.param));
 			rtlsdr_set_direct_sampling(dev, ntohl(cmd.param));
 			break;
 		case 0x0a:
-			printf("set offset tuning %d\n", ntohl(cmd.param));
+			printf("set offset tuning %u\n", ntohl(cmd.param));
 			rtlsdr_set_offset_tuning(dev, ntohl(cmd.param));
 			break;
 		case 0x0b:
-			printf("set rtl xtal %d\n", ntohl(cmd.param));
+			printf("set rtl xtal %u\n", ntohl(cmd.param));
 			rtlsdr_set_xtal_freq(dev, ntohl(cmd.param), 0);
 			break;
 		case 0x0c:
-			printf("set tuner xtal %d\n", ntohl(cmd.param));
+			printf("set tuner xtal %u\n", ntohl(cmd.param));
 			rtlsdr_set_xtal_freq(dev, 0, ntohl(cmd.param));
 			break;
 		case 0x0d:
-			printf("set tuner gain by index %d\n", ntohl(cmd.param));
+			printf("set tuner gain by index %u\n", ntohl(cmd.param));
 			set_gain_by_index(dev, ntohl(cmd.param));
 			break;
 		default:

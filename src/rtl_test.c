@@ -79,9 +79,7 @@ void usage(void)
 		"\t[-s samplerate (default: 2048000 Hz)]\n"
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-t enable tuner range benchmark]\n"
-#ifndef _WIN32
 		"\t[-p[seconds] enable PPM error measurement (default: 10 seconds)]\n"
-#endif
 		"\t[-b output_block_size (default: 16 * 16384)]\n"
 		"\t[-S force sync output (default: async)]\n");
 	exit(1);
@@ -151,31 +149,48 @@ static int ppm_gettime(struct timespec *ts)
 #endif
 	return rv;
 }
+#endif
 
-static int ppm_report(uint64_t nsamples, uint64_t interval)
+static double get_rate(uint64_t nsamples, int64_t interval, int64_t divider)
 {
-	double real_rate, ppm;
+	return nsamples / (interval / (double)divider);
 
-	real_rate = nsamples * 1e9 / interval;
-	ppm = 1e6 * (real_rate / (double)samp_rate - 1.);
+}
+
+static int ppm_report(uint64_t nsamples, int64_t interval, int64_t divider)
+{
+	double real_rate = get_rate(nsamples, interval, divider);
+	double ppm = 1e6 * (real_rate / (double)samp_rate - 1.);
 	return (int)round(ppm);
 }
 
 static void ppm_test(uint32_t len)
 {
 	static uint64_t nsamples = 0;
-	static uint64_t interval = 0;
 	static uint64_t nsamples_total = 0;
-	static uint64_t interval_total = 0;
+	static int64_t interval = 0;
+	static int64_t interval_total = 0;
+
+#ifdef _WIN32
+	static LARGE_INTEGER perfFrequency;
+	static LARGE_INTEGER ppm_now;
+	static LARGE_INTEGER ppm_recent;
+#else
 	struct timespec ppm_now;
 	static struct timespec ppm_recent;
+#endif
+
 	static enum {
 		PPM_INIT_NO,
 		PPM_INIT_DUMP,
 		PPM_INIT_RUN
 	} ppm_init = PPM_INIT_NO;
 
+#ifdef _WIN32
+	QueryPerformanceCounter(&ppm_now);
+#else
 	ppm_gettime(&ppm_now);
+#endif
 	if (ppm_init != PPM_INIT_RUN) {
 		/*
 		 * Kyle Keen wrote:
@@ -185,51 +200,69 @@ static void ppm_test(uint32_t len)
 		 * Discarding the first few seconds allows the value to stabilize much faster.
 		*/
 		if (ppm_init == PPM_INIT_NO) {
+#ifdef _WIN32
+			QueryPerformanceFrequency(&perfFrequency);
+			ppm_recent.QuadPart = ppm_now.QuadPart + (PPM_DUMP_TIME * perfFrequency.QuadPart);
+#else
 			ppm_recent.tv_sec = ppm_now.tv_sec + PPM_DUMP_TIME;
+#endif
 			ppm_init = PPM_INIT_DUMP;
 			return;
 		}
+#ifdef _WIN32
+		if (ppm_init == PPM_INIT_DUMP && ppm_recent.QuadPart < ppm_now.QuadPart)
+#else
 		if (ppm_init == PPM_INIT_DUMP && ppm_recent.tv_sec < ppm_now.tv_sec)
+#endif
 			return;
-		ppm_recent.tv_sec = ppm_now.tv_sec;
-		ppm_recent.tv_nsec = ppm_now.tv_nsec;
+		ppm_recent = ppm_now;
 		ppm_init = PPM_INIT_RUN;
 		return;
 	}
-	nsamples += (uint64_t)(len / 2UL);
-	interval = (uint64_t)(ppm_now.tv_sec - ppm_recent.tv_sec);
+	nsamples += len / 2UL;
+#ifdef _WIN32
+	interval = ppm_now.QuadPart - ppm_recent.QuadPart;
+	if (interval < (ppm_duration * perfFrequency.QuadPart))
+		return;
+#else
+	interval = ppm_now.tv_sec - ppm_recent.tv_sec;
 	if (interval < ppm_duration)
 		return;
 	interval *= 1000000000UL;
 	interval += (int64_t)(ppm_now.tv_nsec - ppm_recent.tv_nsec);
+#endif
+
 	nsamples_total += nsamples;
 	interval_total += interval;
 	printf("real sample rate: %i current PPM: %i cumulative PPM: %i\n",
-		(int)((1000000000UL * nsamples) / interval),
-		ppm_report(nsamples, interval),
-		ppm_report(nsamples_total, interval_total));
-	ppm_recent.tv_sec = ppm_now.tv_sec;
-	ppm_recent.tv_nsec = ppm_now.tv_nsec;
+#ifdef _WIN32
+		(int)get_rate(nsamples, interval, perfFrequency.QuadPart),
+		ppm_report(nsamples, interval, perfFrequency.QuadPart),
+		ppm_report(nsamples_total, interval_total, perfFrequency.QuadPart));
+
+#else
+		(int)get_rate(nsamples, interval, 1000000000UL),
+		ppm_report(nsamples, interval, 1000000000UL),
+		ppm_report(nsamples_total, interval_total, 1000000000UL));
+#endif
+	ppm_recent = ppm_now;
 	nsamples = 0;
 }
-#endif
 
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	underrun_test(buf, len, 0);
-#ifndef _WIN32
 	if (test_mode == PPM_BENCHMARK)
 		ppm_test(len);
-#endif
 }
 
 /* smallest band or band gap that tuner_benchmark() will notice */
 static uint32_t max_step(uint32_t freq) {
-	if (freq < 1e6)
-		return 1e4;
-	if (freq > 1e8)
-		return 1e6;
-	return freq / 1e2;
+	if (freq < 1000000U)
+		return 10000U;
+	if (freq > 100000000U)
+		return 1000000U;
+	return freq / 100U;
 }
 
 /* precision with which tuner_benchmark() will measure the edges of bands */
@@ -415,7 +448,7 @@ int main(int argc, char **argv)
 	verbose_reset_buffer(dev);
 
 	if ((test_mode == PPM_BENCHMARK) && !sync_mode) {
-		fprintf(stderr, "Reporting PPM error measurement every %i seconds...\n", ppm_duration);
+		fprintf(stderr, "Reporting PPM error measurement every %u seconds...\n", ppm_duration);
 		fprintf(stderr, "Press ^C after a few minutes.\n");
 	}
 

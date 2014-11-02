@@ -542,7 +542,7 @@ static int r82xx_set_pll(struct r82xx_priv *priv, uint32_t freq)
 	 *  vco_div = 65536*(nint + sdm/65536) = int( 0.5 + 65536 * vco_freq / (2 * pll_ref) )
 	 *  vco_div = 65536*nint + sdm         = int( (pll_ref + 65536 * vco_freq) / (2 * pll_ref) )
 	 */
-        
+
 	vco_div = (pll_ref + 65536 * vco_freq) / (2 * pll_ref);
 	nint = (uint32_t) (vco_div / 65536);
 	sdm = (uint32_t) (vco_div % 65536);
@@ -826,9 +826,8 @@ static int r82xx_init_tv_standard(struct r82xx_priv *priv,
 {
 	/* everything that was previously done in r82xx_set_tv_standard
 	 * and doesn't need to be changed when filter settings change */
-	int rc, i;
+	int rc;
 	uint32_t if_khz, filt_cal_lo;
-	uint8_t data[5], val;
 	uint8_t filt_gain, img_r, ext_enable, loop_through;
 	uint8_t lt_att, flt_ext_widest, polyfil_cur;
 
@@ -907,7 +906,7 @@ static int r82xx_init_tv_standard(struct r82xx_priv *priv,
 }
 
 static int r82xx_set_if_filter(struct r82xx_priv *priv, int hpf, int lpf) {
-	int rc, i;
+	int rc;
 	uint8_t filt_q, hp_cor;
 	int cal;
 	filt_q = 0x10;		/* r10[4]:low q(1'b1) */
@@ -1076,7 +1075,7 @@ int r82xx_set_gain(struct r82xx_priv *priv, int set_manual_gain, int gain)
 
 int r82xx_set_freq(struct r82xx_priv *priv, uint32_t freq)
 {
-	int rc = -1;
+	int rc;
 	uint32_t lo_freq = freq + priv->int_freq;
 	uint8_t air_cable1_in;
 
@@ -1113,7 +1112,7 @@ err:
 
 int r82xx_set_nomod(struct r82xx_priv *priv)
 {
-	int rc = -1;
+	int rc;
 
 	fprintf(stderr, "Using R820T no-mod direct sampling mode\n");
 
@@ -1285,7 +1284,6 @@ int r82xx_init(struct r82xx_priv *priv)
 	priv->init_done = 1;
 	priv->reg_cache = 1;
 
-err:
 	if (rc < 0)
 		fprintf(stderr, "%s: failed=%d\n", __FUNCTION__, rc);
 	return rc;

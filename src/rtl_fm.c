@@ -63,7 +63,7 @@
 #include <io.h>
 #include "getopt/getopt.h"
 #define usleep(x) Sleep(x/1000)
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && _MSC_VER < 1800
 #define round(x) (x > 0.0 ? floor(x + 0.5): ceil(x - 0.5))
 #endif
 #define _USE_MATH_DEFINES
@@ -252,9 +252,7 @@ void usage(void)
 		"\t    no-mod: enable no-mod direct sampling\n"
 		"\t    offset: enable offset tuning\n"
 		"\t    wav:    generate WAV header\n"
-#ifndef _WIN32
 		"\t    pad:    pad output gaps with zeros\n"
-#endif
 		"\t    lrmix:  one channel goes to left audio, one to right (broken)\n"
 		"\t            remember to enable stereo (-c 2) in sox\n"
 		"\tfilename ('-' means stdout)\n"
@@ -324,7 +322,7 @@ int cic_9_tables[][10] = {
 	{9, -199, -362, 5303, -25505, 77489, -25505, 5303, -362, -199},
 };
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && _MSC_VER < 1800
 double log2(double n)
 {
 	return log(n) / log(2.0);
@@ -757,7 +755,7 @@ void dc_block_filter(struct demod_state *fm)
 	for (i=0; i < fm->lp_len; i++) {
 		sum += lp[i];
 	}
-	avg = sum / fm->lp_len;
+	avg = (int)(sum / fm->lp_len);
 	avg = (avg + fm->dc_avg * 9) / 10;
 	for (i=0; i < fm->lp_len; i++) {
 		lp[i] -= avg;
@@ -947,13 +945,15 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	int i;
 	struct dongle_state *s = ctx;
-	struct demod_state *d  = s->targets[0];
-	struct demod_state *d2 = s->targets[1];
+	struct demod_state *d;
+	struct demod_state *d2;
 
 	if (do_exit) {
 		return;}
-	if (!ctx) {
+	if (!s) {
 		return;}
+	d  = s->targets[0];
+	d2 = s->targets[1];
 	if (s->mute) {
 		for (i=0; i<s->mute; i++) {
 			buf[i] = 127;}
@@ -1040,11 +1040,18 @@ static void *output_thread_fn(void *arg)
 	struct output_state *s = arg;
 	struct buffer_bucket *b0 = &s->results[0];
 	struct buffer_bucket *b1 = &s->results[1];
+	int64_t i, duration, samples = 0LL, samples_now;
+#ifdef _WIN32
+	LARGE_INTEGER perfFrequency;
+	LARGE_INTEGER start_time;
+	LARGE_INTEGER now_time;
+
+	QueryPerformanceFrequency(&perfFrequency);
+	QueryPerformanceCounter(&start_time);
+#else
 	struct timespec start_time;
 	struct timespec now_time;
-	int64_t i, duration, samples, samples_now;
-	samples = 0L;
-#ifndef _WIN32
+
 	get_nanotime(&start_time);
 #endif
 	while (!do_exit) {
@@ -1071,10 +1078,9 @@ static void *output_thread_fn(void *arg)
 			pthread_rwlock_unlock(&b0->rw);
 			continue;
 		}
-#ifndef _WIN32
+
 		/* padding requires output at constant rate */
 		/* pthread_cond_timedwait is terrible, roll our own trycond */
-		// figure out how to do this with windows HPET
 		usleep(2000);
 		pthread_mutex_lock(&b0->trycond_m);
 		r = b0->trycond;
@@ -1088,11 +1094,17 @@ static void *output_thread_fn(void *arg)
 			pthread_rwlock_unlock(&b0->rw);
 			continue;
 		}
+#ifdef _WIN32
+		QueryPerformanceCounter(&now_time);
+		duration = now_time.QuadPart - start_time.QuadPart;
+		samples_now = (duration * s->rate) / perfFrequency.QuadPart;
+#else
 		get_nanotime(&now_time);
 		duration = now_time.tv_sec - start_time.tv_sec;
 		duration *= 1000000000L;
 		duration += (now_time.tv_nsec - start_time.tv_nsec);
-		samples_now = (duration * (int64_t)s->rate) / 1000000000L;
+		samples_now = (duration * s->rate) / 1000000000UL;
+#endif
 		if (samples_now < samples) {
 			continue;}
 		for (i=samples; i<samples_now; i++) {
@@ -1100,7 +1112,6 @@ static void *output_thread_fn(void *arg)
 			fputc(0, s->file);
 		}
 		samples = samples_now;
-#endif
 	}
 	return 0;
 }
@@ -1392,7 +1403,6 @@ void sanity_checks(void)
 
 int agc_init(struct demod_state *s)
 {
-	int i;
 	struct agc_state *agc;
 
 	agc = malloc(sizeof(struct agc_state));
