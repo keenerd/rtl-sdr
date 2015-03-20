@@ -57,6 +57,7 @@ void usage(void)
 		"\t[-S force sync output (default: async)]\n"
 		"\t[-D direct_sampling_mode, 0 (default/off), 1 (I), 2 (Q), 3 (no-mod)]\n"
 		"\t[-N no dithering (default: use dithering)]\n"
+		"\t[-X enable RTL AGC]\n"
 		"\tfilename (a '-' dumps samples to stdout)\n\n");
 	exit(1);
 }
@@ -115,6 +116,7 @@ int main(int argc, char **argv)
 	int gain = 0;
 	int ppm_error = 0;
 	int sync_mode = 0;
+	int rtlagc = 1;
 	int direct_sampling = 0;
 	int dithering = 1;
 	FILE *file;
@@ -127,6 +129,9 @@ int main(int argc, char **argv)
 
 	while ((opt = getopt(argc, argv, "d:f:g:s:b:n:p:D:SN")) != -1) {
 		switch (opt) {
+		case 'x':
+			rtlagc = 0;
+			break;*/
 		case 'd':
 			dev_index = verbose_device_search(optarg);
 			dev_given = 1;
@@ -220,6 +225,12 @@ int main(int argc, char **argv)
 
 	if (direct_sampling) {
 		verbose_direct_sampling(dev, direct_sampling);
+	}
+
+	/* enable RTL_AGC */
+	if (!rtlagc) {
+		fprintf(stderr,"Enabling RTL AGC\n");
+		verbose_set_rtlagc(dev);
 	}
 
 	/* Set the sample rate */
