@@ -11,6 +11,6 @@ Features added by me:
 
 - Ability to enable RTL AGC in rtl_sdr
 
-in rtl_sdr a you can use the "-X" switch to enable RTL AGC
+Now in rtl_sdr you can use the "-X" switch to enable RTL AGC
 
 ======================================================================
