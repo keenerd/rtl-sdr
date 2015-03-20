@@ -57,7 +57,7 @@ void usage(void)
 		"\t[-S force sync output (default: async)]\n"
 		"\t[-D direct_sampling_mode, 0 (default/off), 1 (I), 2 (Q), 3 (no-mod)]\n"
 		"\t[-N no dithering (default: use dithering)]\n"
-		"\t[-X enable RTL AGC]\n"
+		"\t[-x enable RTL AGC]\n"
 		"\tfilename (a '-' dumps samples to stdout)\n\n");
 	exit(1);
 }
@@ -131,7 +131,7 @@ int main(int argc, char **argv)
 		switch (opt) {
 		case 'x':
 			rtlagc = 0;
-			break;*/
+			break;
 		case 'd':
 			dev_index = verbose_device_search(optarg);
 			dev_given = 1;
