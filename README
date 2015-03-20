@@ -14,3 +14,14 @@ Features added by me (MichelinoK):
 Now in rtl_sdr you can use the "-X" switch to enable RTL AGC
 
 ======================================================================
+
+Suggested to compile this way:
+
+git clone https://github.com/michelinok/rtl-sdr.git
+cd rtl-sdr
+mkdir build
+cd build
+cmake ../ -DDETACH_KERNEL_DRIVER=ON -DINSTALL_UDEV_RULES=ON
+make
+sudo make install
+sudo ldconfig
