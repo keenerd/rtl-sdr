@@ -397,7 +397,7 @@ int main(int argc, char **argv)
 			dev_given = 1;
 			break;
 		case 'X':
-			rtlagc = 0;
+			rtlagc = 1;
                         break;
 		case 'f':
 			frequency = (uint32_t)atofs(optarg);
@@ -479,7 +479,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Tuned to %i Hz.\n", frequency);
 
        /* enable RTL_AGC */
-        if (!rtlagc) {
+        if (rtlagc) {
                 fprintf(stderr,"Enabling RTL AGC\n");
                 verbose_set_rtlagc(dev);
         }
