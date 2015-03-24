@@ -10,8 +10,9 @@ http://sdr.osmocom.org/trac/wiki/rtl-sdr
 Features added by me (MichelinoK):
 
 - Ability to enable RTL AGC in rtl_sdr
+- Ability to enable RTL AGC in rtl_tcp (for those apps that doesn't support enabling it)
 
-Now in rtl_sdr you can use the "-X" switch to enable RTL AGC
+Now in rtl_sdr and rtl_tcp you can use the "-X" switch to enable RTL AGC
 
 ======================================================================
 
