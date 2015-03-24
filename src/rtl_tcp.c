@@ -95,7 +95,8 @@ void usage(void)
 		"\t[-b number of buffers (default: 15, set by library)]\n"
 		"\t[-n max number of linked list buffers to keep (default: 500)]\n"
 		"\t[-d device index (default: 0)]\n"
-		"\t[-P ppm_error (default: 0)]\n");
+		"\t[-P ppm_error (default: 0)]\n"
+		 "\t[-X enable RTL AGC]\n");
 	exit(1);
 }
 
@@ -369,6 +370,7 @@ int main(int argc, char **argv)
 	int dev_index = 0;
 	int dev_given = 0;
 	int gain = 0;
+	int rtlagc = 0;
 	int ppm_error = 0;
 	int custom_ppm = 0;
 	struct llist *curelem,*prev;
@@ -388,12 +390,15 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:X")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = verbose_device_search(optarg);
 			dev_given = 1;
 			break;
+		case 'X':
+			rtlagc = 0;
+                        break;
 		case 'f':
 			frequency = (uint32_t)atofs(optarg);
 			break;
@@ -472,6 +477,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "WARNING: Failed to set center freq.\n");
 	else
 		fprintf(stderr, "Tuned to %i Hz.\n", frequency);
+
+       /* enable RTL_AGC */
+        if (!rtlagc) {
+                fprintf(stderr,"Enabling RTL AGC\n");
+                verbose_set_rtlagc(dev);
+        }
+
+
 
 	if (0 == gain) {
 		 /* Enable automatic gain */
