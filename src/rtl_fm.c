@@ -105,7 +105,8 @@ int ss_busy[SHARED_SIZE] = {0};
 
 enum agc_mode_t
 {
-	agc_normal = 0,
+	agc_off = 0,
+	agc_normal,
 	agc_aggressive
 };
 
@@ -176,7 +177,6 @@ struct demod_state
 	int      dc_block, dc_avg;
 	int      rotate_enable;
 	struct   translate_state rotate;
-	int      agc_enable;
 	enum	 agc_mode_t agc_mode;
 	struct   agc_state *agc;
 	void     (*mode_demod)(struct demod_state*);
@@ -921,7 +921,7 @@ void full_demod(struct demod_state *d)
 		return;}
 	if (d->dc_block) {
 		dc_block_filter(d);}
-	if (d->agc_enable) {
+	if (d->agc_mode != agc_off) {
 		software_agc(d);}
 	/* todo, fm noise squelch */
 	// use nicer filter here too?
@@ -1187,7 +1187,6 @@ void clone_demod(struct demod_state *d2, struct demod_state *d1)
 	d2->deemph_a = d1->deemph_a;
 	d2->dc_block = d1->dc_block;
 	d2->rotate_enable = d1->rotate_enable;
-	d2->agc_enable = d1->agc_enable;
 	d2->agc_mode = d1->agc_mode;
 	d2->mode_demod = d1->mode_demod;
 }
@@ -1331,8 +1330,7 @@ void demod_init(struct demod_state *s)
 	s->post_downsample = 1;  // once this works, default = 4
 	s->custom_atan = 0;
 	s->deemph = 0;
-	s->agc_enable = 0;
-	s->agc_mode = agc_normal;
+	s->agc_mode = agc_off;
 	s->rotate_enable = 0;
 	s->rotate.len = 0;
 	s->rotate.sincos = NULL;
@@ -1549,9 +1547,8 @@ int main(int argc, char **argv)
 			if (strcmp("deemp",  optarg) == 0) {
 				demod.deemph = 1;}
 			if (strcmp("swagc",  optarg) == 0) {
-				demod.agc_enable = 1;}
+				demod.agc_mode = agc_normal;}
 			if (strcmp("swagc-aggressive",  optarg) == 0) {
-				demod.agc_enable = 1;
 				demod.agc_mode = agc_aggressive;}
 			if (strcmp("direct",  optarg) == 0) {
 				dongle.direct_sampling = 1;}
