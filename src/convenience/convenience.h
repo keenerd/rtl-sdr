@@ -149,3 +149,10 @@ int verbose_reset_buffer(rtlsdr_dev_t *dev);
 
 int verbose_device_search(char *s);
 
+/*!
+* Enable RTL AGC
+* Mod by MichelinoK
+* email: michele@computerteam.it
+*/
+
+int verbose_set_rtlagc(rtlsdr_dev_t *dev);

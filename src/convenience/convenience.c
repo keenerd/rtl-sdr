@@ -136,6 +136,18 @@ int nearest_gain(rtlsdr_dev_t *dev, int target_gain)
 	return nearest;
 }
 
+int verbose_set_rtlagc(rtlsdr_dev_t *dev)
+{
+	int r;
+	r = rtlsdr_set_agc_mode(dev, 1);
+	if (r < 0) {
+		fprintf(stderr, "WARNING: Failed to set RTL AGC\n");
+	} else {
+		fprintf(stderr, "RTL AGC enabled\n");
+	}
+	return r;
+}
+
 int verbose_set_frequency(rtlsdr_dev_t *dev, uint32_t frequency)
 {
 	int r;

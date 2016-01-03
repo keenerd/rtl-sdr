@@ -4,3 +4,25 @@ turns your Realtek RTL2832 based DVB dongle into a SDR receiver
 
 For more information see:
 http://sdr.osmocom.org/trac/wiki/rtl-sdr
+
+======================================================================
+
+Features added by me (MichelinoK):
+
+- Ability to enable RTL AGC in rtl_sdr
+- Ability to enable RTL AGC in rtl_tcp (for those apps that doesn't support enabling it)
+
+Now in rtl_sdr and rtl_tcp you can use the "-X" switch to enable RTL AGC
+
+======================================================================
+
+Suggested to compile this way:
+
+git clone https://github.com/michelinok/rtl-sdr.git
+cd rtl-sdr
+mkdir build
+cd build
+cmake ../ -DDETACH_KERNEL_DRIVER=ON -DINSTALL_UDEV_RULES=ON
+make
+sudo make install
+sudo ldconfig
