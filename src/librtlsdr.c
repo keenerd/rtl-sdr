@@ -840,10 +840,10 @@ int rtlsdr_write_eeprom(rtlsdr_dev_t *dev, uint8_t *data, uint8_t offset, uint16
 	int r = 0;
 	int i;
 	uint8_t cmd[2];
-	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (!dev)
 		return -1;
+	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if ((len + offset) > 256)
 		return -2;
@@ -878,10 +878,10 @@ int rtlsdr_read_eeprom(rtlsdr_dev_t *dev, uint8_t *data, uint8_t offset, uint16_
 {
 	int r = 0;
 	int i;
-	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (!dev)
 		return -1;
+	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if ((len + offset) > 256)
 		return -2;
@@ -934,10 +934,10 @@ uint32_t rtlsdr_get_center_freq(rtlsdr_dev_t *dev)
 int rtlsdr_set_freq_correction(rtlsdr_dev_t *dev, int ppm)
 {
 	int r = 0;
-	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (!dev)
 		return -1;
+	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (dev->corr == ppm)
 		return -2;
@@ -1269,10 +1269,10 @@ int rtlsdr_get_direct_sampling(rtlsdr_dev_t *dev)
 int rtlsdr_set_offset_tuning(rtlsdr_dev_t *dev, int on)
 {
 	int r = 0;
-	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if (!dev)
 		return -1;
+	rtlsdr_set_i2c_repeater(dev, 0);
 
 	if ((dev->tuner_type == RTLSDR_TUNER_R820T) ||
 	    (dev->tuner_type == RTLSDR_TUNER_R828D))
