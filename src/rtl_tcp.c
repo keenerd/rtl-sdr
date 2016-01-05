@@ -95,7 +95,8 @@ void usage(void)
 		"\t[-b number of buffers (default: 15, set by library)]\n"
 		"\t[-n max number of linked list buffers to keep (default: 500)]\n"
 		"\t[-d device index (default: 0)]\n"
-		"\t[-P ppm_error (default: 0)]\n");
+		"\t[-P ppm_error (default: 0)]\n"
+		"\t[-N no dithering (default: use dithering)]\n");
 	exit(1);
 }
 
@@ -371,6 +372,7 @@ int main(int argc, char **argv)
 	int gain = 0;
 	int ppm_error = 0;
 	int custom_ppm = 0;
+	int dithering = 1;
 	struct llist *curelem,*prev;
 	pthread_attr_t attr;
 	void *status;
@@ -388,7 +390,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:N")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = verbose_device_search(optarg);
@@ -418,6 +420,9 @@ int main(int argc, char **argv)
 		case 'P':
 			ppm_error = atoi(optarg);
 			custom_ppm = 1;
+			break;
+		case 'N':
+			dithering = 0;
 			break;
 		default:
 			usage();
@@ -454,6 +459,17 @@ int main(int argc, char **argv)
 #else
 	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
 #endif
+
+	/* Enable/disable dithering */
+	if (!dithering) {
+		fprintf(stderr, "Disabling dithering...  ");
+		r = rtlsdr_set_dithering(dev, dithering);
+		if (r) {
+			fprintf(stderr, "failure\n");
+		} else {
+			fprintf(stderr, "success\n");
+		}
+	}
 
 	/* Set the tuner error */
 	if (!custom_ppm) {
