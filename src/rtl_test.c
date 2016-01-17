@@ -152,9 +152,10 @@ static void underrun_test(unsigned char *buf, uint32_t len, int mute)
 static int ppm_gettime(struct time_generic *tg)
 {
 	int rv = ENOSYS;
-	struct timespec ts;
 
 #ifdef __unix__
+	struct timespec ts;
+
 	rv = clock_gettime(CLOCK_MONOTONIC, &ts);
 	tg->tv_sec = ts.tv_sec;
 	tg->tv_nsec = ts.tv_nsec;
@@ -162,8 +163,8 @@ static int ppm_gettime(struct time_generic *tg)
 	struct timeval tv;
 
 	rv = gettimeofday(&tv, NULL);
-	ts->tv_sec = tv.tv_sec;
-	ts->tv_nsec = tv.tv_usec * 1000;
+	tg->tv_sec = tv.tv_sec;
+	tg->tv_nsec = tv.tv_usec * 1000;
 #endif
 	return rv;
 }
