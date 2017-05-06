@@ -92,6 +92,9 @@ static int *atan_lut = NULL;
 static int atan_lut_size = 131072; /* 512 KB */
 static int atan_lut_coef = 8;
 
+static uint8_t *buffer = NULL;
+static int use_sync = 0;
+
 struct dongle_state
 {
 	int      exit_flag;
@@ -215,6 +218,7 @@ void usage(void)
 		"\t    enables low-leakage downsample filter\n"
 		"\t    size can be 0 or 9.  0 has bad roll off\n"
 		"\t[-A std/fast/lut choose atan math (default: std)]\n"
+		"\t[-S force sync output (defatuls: async)]\n"
 		//"\t[-C clip_path (default: off)\n"
 		//"\t (create time stamped raw clips, requires squelch)\n"
 		//"\t (path must have '\%s' and will expand to date_time_freq)\n"
@@ -236,7 +240,8 @@ sighandler(int signum)
 	if (CTRL_C_EVENT == signum) {
 		fprintf(stderr, "Signal caught, exiting!\n");
 		do_exit = 1;
-		rtlsdr_cancel_async(dongle.dev);
+		if (!use_sync)
+			rtlsdr_cancel_async(dongle.dev);
 		return TRUE;
 	}
 	return FALSE;
@@ -246,7 +251,8 @@ static void sighandler(int signum)
 {
 	fprintf(stderr, "Signal caught, exiting!\n");
 	do_exit = 1;
-	rtlsdr_cancel_async(dongle.dev);
+	if (!use_sync)
+		rtlsdr_cancel_async(dongle.dev);
 }
 #endif
 
@@ -1034,6 +1040,20 @@ void sanity_checks(void)
 
 }
 
+void dongle_read_sync(struct dongle_state *s)
+{
+	int r;
+	int n_read;
+
+	r = rtlsdr_read_sync(s->dev, buffer, ACTUAL_BUF_LENGTH, &n_read);
+	if (r < 0) {
+		fprintf(stderr, "WARNING: sync read failed.\n");
+		return;
+	}
+
+	rtlsdr_callback(buffer, n_read, s);
+}
+
 int main(int argc, char **argv)
 {
 #ifndef _WIN32
@@ -1047,7 +1067,7 @@ int main(int argc, char **argv)
 	output_init(&output);
 	controller_init(&controller);
 
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h")) != -1) {
+	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:S")) != -1) {
 		switch (opt) {
 		case 'd':
 			dongle.dev_index = verbose_device_search(optarg);
@@ -1142,6 +1162,9 @@ int main(int argc, char **argv)
 				demod.deemph = 1;
 				demod.squelch_level = 0;}
 			break;
+		case 'S':
+			use_sync = 1;
+			break;
 		case 'h':
 		default:
 			usage();
@@ -1229,18 +1252,33 @@ int main(int argc, char **argv)
 	usleep(100000);
 	pthread_create(&output.thread, NULL, output_thread_fn, (void *)(&output));
 	pthread_create(&demod.thread, NULL, demod_thread_fn, (void *)(&demod));
-	pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
 
-	while (!do_exit) {
-		usleep(100000);
+	if (!use_sync) {
+		pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
+		while(!do_exit) {
+			usleep(100000);
+		}
 	}
+	else {
+
+		buffer = malloc(ACTUAL_BUF_LENGTH * sizeof(uint8_t));
+
+		while (!do_exit) {
+			dongle_read_sync(&dongle);
+			usleep(100);
+		}
+
+		free (buffer);
+	}
+	
 
 	if (do_exit) {
 		fprintf(stderr, "\nUser cancel, exiting...\n");}
 	else {
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
 
-	rtlsdr_cancel_async(dongle.dev);
+	if (!use_sync)
+		rtlsdr_cancel_async(dongle.dev);
 	pthread_join(dongle.thread, NULL);
 	safe_cond_signal(&demod.ready, &demod.ready_m);
 	pthread_join(demod.thread, NULL);
