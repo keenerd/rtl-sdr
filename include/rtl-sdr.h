@@ -146,8 +146,6 @@ RTLSDR_API int rtlsdr_set_center_freq(rtlsdr_dev_t *dev, uint32_t freq);
 
 RTLSDR_API int rtlsdr_set_if_freq(rtlsdr_dev_t *dev, uint32_t freq);
 
-RTLSDR_API int rtlsdr_set_if_bandwidth(rtlsdr_dev_t *dev, int bw);
-
 /*!
  * Get actual frequency the device is tuned to.
  *
@@ -218,6 +216,15 @@ RTLSDR_API int rtlsdr_get_tuner_gains(rtlsdr_dev_t *dev, int *gains);
  * \return 0 on success
  */
 RTLSDR_API int rtlsdr_set_tuner_gain(rtlsdr_dev_t *dev, int gain);
+
+/*!
+ * Set the bandwidth for the device.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param bw bandwidth in Hz. Zero means automatic BW selection.
+ * \return 0 on success
+ */
+RTLSDR_API int rtlsdr_set_tuner_bandwidth(rtlsdr_dev_t *dev, uint32_t bw);
 
 /*!
  * Get actual gain the device is configured to.
@@ -386,6 +393,36 @@ RTLSDR_API int rtlsdr_read_async(rtlsdr_dev_t *dev,
  */
 RTLSDR_API int rtlsdr_cancel_async(rtlsdr_dev_t *dev);
 
+/*!
+ * Enable or disable the bias tee on GPIO PIN 0.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param on  1 for Bias T on. 0 for Bias T off.
+ * \return -1 if device is not initialized. 0 otherwise.
+ */
+RTLSDR_API int rtlsdr_set_bias_tee(rtlsdr_dev_t *dev, int on);
+
+RTLSDR_API int rtlsdr_demod_write_reg(rtlsdr_dev_t *dev, uint8_t page, uint16_t addr, uint16_t val, uint8_t len);
+
+RTLSDR_API void rtlsdr_set_i2c_repeater(rtlsdr_dev_t *dev, int on);
+
+/*!
+ * Set the sample rate correction value for the device.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param correction sample rate correction as fraction of the sample rate
+ * \return 0 on success
+ */
+RTLSDR_API int rtlsdr_set_sample_freq_correction_f(rtlsdr_dev_t *dev, float correction);
+
+/*!
+ * Set the sample rate correction value for the device.
+ *
+ * \param dev the device handle given by rtlsdr_open()
+ * \param ppm correction value in parts per million (ppm)
+ * \return 0 on success
+ */
+RTLSDR_API int rtlsdr_set_sample_freq_correction(rtlsdr_dev_t *dev, int ppm);
 #ifdef __cplusplus
 }
 #endif

@@ -117,6 +117,7 @@ struct rtlsdr_dev {
 	uint32_t offs_freq; /* Hz */
 	int corr; /* ppm */
 	int gain; /* tenth dB */
+	int bw;
 	struct e4k_state e4k_s;
 	struct r82xx_config r82xx_c;
 	struct r82xx_priv r82xx_p;
@@ -724,6 +725,26 @@ int rtlsdr_set_if_freq(rtlsdr_dev_t *dev, uint32_t freq)
 	return r;
 }
 
+int rtlsdr_set_sample_freq_correction_f(rtlsdr_dev_t *dev, float correction)
+{
+	int r = 0;
+	uint8_t tmp;
+	int16_t offs;
+	int32_t offs1 = (int16_t)(correction * -1 * TWO_POW(24));
+	if(offs1 > 0x1FFF) offs = 0x1FFF;
+	else if(offs1 < -0x1FFF) offs = -0x1FFF;
+	else offs = offs1;
+	rtlsdr_set_i2c_repeater(dev, 0);
+
+	tmp = offs & 0xff;
+	r |= rtlsdr_demod_write_reg(dev, 1, 0x3f, tmp, 1);
+	tmp = (offs >> 8) & 0x3f;
+	r |= rtlsdr_demod_write_reg(dev, 1, 0x3e, tmp, 1);
+
+	return r;
+}
+
+
 int rtlsdr_set_sample_freq_correction(rtlsdr_dev_t *dev, int ppm)
 {
 	int r = 0;
@@ -1027,6 +1048,24 @@ int rtlsdr_get_tuner_gains(rtlsdr_dev_t *dev, int *gains)
 	}
 }
 
+int rtlsdr_set_tuner_bandwidth(rtlsdr_dev_t *dev, uint32_t bw)
+{
+	int r = 0;
+
+	if (!dev || !dev->tuner)
+		return -1;
+
+	if (dev->tuner->set_bw) {
+		rtlsdr_set_i2c_repeater(dev, 1);
+		r = dev->tuner->set_bw(dev, bw > 0 ? bw : dev->rate);
+		rtlsdr_set_i2c_repeater(dev, 0);
+		if (r)
+			return r;
+		dev->bw = bw;
+	}
+	return r;
+}
+
 int rtlsdr_set_tuner_gain(rtlsdr_dev_t *dev, int gain)
 {
 	int r = 0;
@@ -1112,13 +1151,9 @@ int rtlsdr_set_sample_rate(rtlsdr_dev_t *dev, uint32_t samp_rate)
 	if ( ((double)samp_rate) != real_rate )
 		fprintf(stderr, "Exact sample rate is: %f Hz\n", real_rate);
 
-	if (dev->tuner && dev->tuner->set_bw) {
-		rtlsdr_set_i2c_repeater(dev, 1);
-		dev->tuner->set_bw(dev, (int)real_rate);
-		rtlsdr_set_i2c_repeater(dev, 0);
-	}
-
 	dev->rate = (uint32_t)real_rate;
+
+	rtlsdr_set_tuner_bandwidth(dev, dev->bw);
 
 	tmp = (rsamp_ratio >> 16);
 	r |= rtlsdr_demod_write_reg(dev, 1, 0x9f, tmp, 2);
@@ -1681,12 +1716,14 @@ int rtlsdr_close(rtlsdr_dev_t *dev)
 	libusb_release_interface(dev->devh, 0);
 
 #ifdef DETACH_KERNEL_DRIVER
+#ifndef DO_NOT_REATTACH
 	if (dev->driver_active) {
 		if (!libusb_attach_kernel_driver(dev->devh, 0))
 			fprintf(stderr, "Reattached kernel driver\n");
 		else
 			fprintf(stderr, "Reattaching kernel driver failed!\n");
 	}
+#endif
 #endif
 
 	libusb_close(dev->devh);
@@ -1978,4 +2015,15 @@ int rtlsdr_i2c_read_fn(void *dev, uint8_t addr, uint8_t *buf, int len)
 		retries--;
 	} while (retries > 0);
 	return -1;
+}
+
+int rtlsdr_set_bias_tee(rtlsdr_dev_t *dev, int on)
+{
+	if (!dev)
+		return -1;
+
+	rtlsdr_set_gpio_output(dev, 0);
+	rtlsdr_set_gpio_bit(dev, 0, on);
+
+	return 0;
 }

@@ -122,6 +122,12 @@ else (DETACH_KERNEL_DRIVER)
     message (STATUS "Building with kernel driver detaching disabled, use -DDETACH_KERNEL_DRIVER=ON to enable")
 endif (DETACH_KERNEL_DRIVER)
 
+option(DO_NOT_REATTACH "Do not reattach kernel driver" OFF)
+if (DO_NOT_REATTACH)
+    message (STATUS "Disabled reattaching of kernel driver")
+    add_definitions(-DDO_NOT_REATTACH=1)
+endif (DO_NOT_REATTACH)
+
 ########################################################################
 # Add subdirectories
 ########################################################################
