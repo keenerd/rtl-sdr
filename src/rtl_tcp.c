@@ -336,8 +336,8 @@ static void *command_worker(void *arg)
 			rtlsdr_set_direct_sampling(dev, ntohl(cmd.param));
 			break;
 		case 0x0a:
-			printf("set offset tuning %u\n", ntohl(cmd.param));
-			rtlsdr_set_offset_tuning(dev, ntohl(cmd.param));
+			 printf("set direct sampling %d\n",3);
+                         rtlsdr_set_direct_sampling(dev, 3);
 			break;
 		case 0x0b:
 			printf("set rtl xtal %u\n", ntohl(cmd.param));
